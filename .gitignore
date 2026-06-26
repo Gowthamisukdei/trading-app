@@ -1,0 +1,21 @@
+# ---- Python (backend) ----
+__pycache__/
+*.pyc
+backend/venv/
+backend/data/*.db
+
+# ---- Node / Next.js (frontend) ----
+node_modules/
+.next/
+out/
+build/
+next-env.d.ts
+
+# ---- Env files / secrets (never commit these) ----
+.env
+.env.local
+.env*.local
+
+# ---- OS noise ----
+.DS_Store
+Thumbs.db

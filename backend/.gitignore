@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Local database (state is regenerated; never commit it)
+data/*.db
+
+# Env
+.env
