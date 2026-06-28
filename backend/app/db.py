@@ -78,6 +78,22 @@ class Repository:
                     key   TEXT PRIMARY KEY,
                     value TEXT
                 );
+
+                -- One row per signal that actually FIRED (a BUY or SELL trigger).
+                -- This is the permanent track record the History page reads. We
+                -- record the target ladder at fire time, then later mark hit_t3
+                -- once price reaches T3 (the final profit target).
+                CREATE TABLE IF NOT EXISTS signal_log (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol      TEXT NOT NULL,
+                    signal      TEXT NOT NULL,        -- 'BUY' or 'SELL'
+                    entry       REAL,                 -- T1, where the trade enters
+                    t1          REAL, t2 REAL, t3 REAL,
+                    week_id     TEXT,
+                    fired_at    TEXT NOT NULL,
+                    hit_t3      INTEGER DEFAULT 0,    -- 0 = still open, 1 = reached T3
+                    resolved_at TEXT                  -- when T3 was hit (else NULL)
+                );
                 """
             )
 
@@ -217,6 +233,48 @@ class Repository:
                 (symbol, new.current, new.prev1, new.prev2, new.prev3),
             )
         return new
+
+    # ---------------- signal log (the permanent track record) ----------------
+
+    def append_signal_log(
+        self, symbol: str, signal: str, entry: float | None,
+        t1: float | None, t2: float | None, t3: float | None,
+        week_id: str | None, fired_at: str | None = None,
+    ) -> int:
+        """Record a freshly fired signal. Returns the new row's id."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO signal_log (symbol, signal, entry, t1, t2, t3, week_id, fired_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (symbol, signal, entry, t1, t2, t3, week_id, fired_at or _now_iso()),
+            )
+            return cur.lastrowid
+
+    def get_open_signal_logs(self, symbol: str) -> list[sqlite3.Row]:
+        """Signals for this symbol that haven't reached T3 yet (still open)."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM signal_log WHERE symbol = ? AND hit_t3 = 0 AND resolved_at IS NULL",
+                (symbol,),
+            ).fetchall()
+
+    def resolve_signal_log(self, log_id: int, resolved_at: str | None = None) -> None:
+        """Mark a logged signal as having reached T3."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE signal_log SET hit_t3 = 1, resolved_at = ? WHERE id = ?",
+                (resolved_at or _now_iso(), log_id),
+            )
+
+    def load_history(self, limit: int = 100) -> list[sqlite3.Row]:
+        """Most-recent-first list of every signal ever fired, for the History page."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM signal_log ORDER BY fired_at DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
 
     # ---------------- small key/value meta (last run timestamps) ----------------
 

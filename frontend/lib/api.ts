@@ -25,6 +25,22 @@ export interface Signal {
   weekId: string;
 }
 
+// Mirror of each /api/history row (see backend service.build_history()).
+// One per signal that ever fired, with whether price later reached T3.
+export interface HistoryRow {
+  id: number;
+  symbol: string;
+  signal: "BUY" | "SELL";
+  entry: number;
+  t1: number;
+  t2: number;
+  t3: number;
+  weekId: string;
+  firedAt: string;
+  hitT3: boolean;
+  resolvedAt: string | null;
+}
+
 export interface Health {
   ok: boolean;
   lastWeeklyRunAt: string | null;
@@ -36,6 +52,12 @@ export interface Health {
 export async function getSignals(): Promise<Signal[]> {
   const res = await fetch(`${API_BASE}/api/signals`, { cache: "no-store" });
   if (!res.ok) throw new Error(`signals: ${res.status}`);
+  return res.json();
+}
+
+export async function getHistory(): Promise<HistoryRow[]> {
+  const res = await fetch(`${API_BASE}/api/history`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`history: ${res.status}`);
   return res.json();
 }
 

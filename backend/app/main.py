@@ -69,6 +69,13 @@ def signals():
     return service.build_signals()
 
 
+@app.get("/api/history")
+def history():
+    """Every signal that ever fired, newest first, with whether it reached T3.
+    This is the strategy's track record, shown on the History page."""
+    return service.build_history()
+
+
 @app.post("/api/scan-now")
 def scan_now():
     """Force a live scan right now (advances every stock's state by one tick).

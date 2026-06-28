@@ -94,12 +94,59 @@ class SignalService:
             loaded = self.repo.load_levels(symbol)
             if loaded is None:
                 continue  # weekly hasn't run yet
-            levels = loaded[0]
+            levels, week_id = loaded[0], loaded[1]
             ltp = self.provider.get_live_price(symbol)
             state, _ = self.repo.load_signal_state(symbol)
             new_state = evaluate_signal(levels, ltp, state)
             self.repo.save_signal_state(symbol, new_state, last_ltp=ltp)
+
+            # If the stock just FIRED this tick (wasn't fired before, is now),
+            # write it into the permanent track record.
+            if new_state.fired_dir and not state.fired_dir:
+                self._log_fired(symbol, new_state.fired_dir, levels, week_id)
+
+            # Whether it fired now or earlier, see if price has since reached T3
+            # for any still-open logged signal, and resolve it.
+            self._resolve_open_logs(symbol, ltp)
         self.repo.set_meta("last_scan_at", _now_iso())
+
+    def _log_fired(self, symbol: str, direction: str, levels, week_id: str) -> None:
+        """Record a newly fired BUY/SELL with its target ladder. T1 is the entry."""
+        if direction == "BUY":
+            t1, t2, t3 = levels.buy_t1, levels.buy_t2, levels.buy_t3
+        else:  # SELL
+            t1, t2, t3 = levels.sell_t1, levels.sell_t2, levels.sell_t3
+        self.repo.append_signal_log(symbol, direction, entry=t1, t1=t1, t2=t2, t3=t3, week_id=week_id)
+
+    def _resolve_open_logs(self, symbol: str, ltp: float) -> None:
+        """A BUY reaches its goal when price rises to T3; a SELL when price falls
+        to T3. Mark any open log that the current price has satisfied."""
+        for row in self.repo.get_open_signal_logs(symbol):
+            hit = (row["signal"] == "BUY" and ltp >= row["t3"]) or \
+                  (row["signal"] == "SELL" and ltp <= row["t3"])
+            if hit:
+                self.repo.resolve_signal_log(row["id"])
+
+    # --- read step: the History page feed ---
+    def build_history(self, limit: int = 100) -> list[dict]:
+        rows: list[dict] = []
+        for r in self.repo.load_history(limit):
+            rows.append(
+                {
+                    "id": r["id"],
+                    "symbol": r["symbol"],
+                    "signal": r["signal"],
+                    "entry": r["entry"],
+                    "t1": r["t1"],
+                    "t2": r["t2"],
+                    "t3": r["t3"],
+                    "weekId": r["week_id"],
+                    "firedAt": r["fired_at"],
+                    "hitT3": bool(r["hit_t3"]),
+                    "resolvedAt": r["resolved_at"],
+                }
+            )
+        return rows
 
     # --- read step: shape current state for the dashboard ---
     def build_signals(self) -> list[dict]:

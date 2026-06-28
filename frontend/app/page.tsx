@@ -7,6 +7,7 @@
 //   3. render one colour-coded row per stock
 // All backend talk goes through lib/api.ts.
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getHealth,
@@ -120,13 +121,21 @@ export default function Dashboard() {
             Mon-Tue level broken → armed; price hits T1 → signal fires.
           </p>
         </div>
-        <button
-          onClick={handleScan}
-          disabled={scanning}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {scanning ? "Scanning…" : "Scan now"}
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/history"
+            className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800"
+          >
+            History →
+          </Link>
+          <button
+            onClick={handleScan}
+            disabled={scanning}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {scanning ? "Scanning…" : "Scan now"}
+          </button>
+        </div>
       </div>
 
       {/* Health strip */}
