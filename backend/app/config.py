@@ -19,3 +19,8 @@ DEV_MODE: bool = _flag("TRADING_DEV")
 
 # How often to scan in dev mode (seconds). In production the scan is every 5 min.
 DEV_SCAN_SECONDS: int = int(os.getenv("TRADING_DEV_SCAN_SECONDS", "5"))
+
+# Which data source to use: "fake" (the 3 hardcoded demo stocks) or "nse" (the
+# real NSE scraper). Defaults to fake so nothing breaks if the scraper has a bad
+# day; flip to nse via TRADING_PROVIDER=nse once the scraper is verified.
+PROVIDER: str = os.getenv("TRADING_PROVIDER", "fake").strip().lower()

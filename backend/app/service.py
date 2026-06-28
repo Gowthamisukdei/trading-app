@@ -13,11 +13,14 @@ survives a backend restart. Note how the engine import (compute_levels /
 evaluate_signal) is unchanged from before: only the storage swapped.
 """
 
+import logging
 from datetime import date, datetime, timezone
 
 from app.db import Repository
 from app.providers import DataProvider, FakeProvider
 from app.strategy import SignalState, WeekBuffer, compute_levels, evaluate_signal
+
+log = logging.getLogger(__name__)
 
 
 def current_week_id(today: date | None = None) -> str:
@@ -68,24 +71,30 @@ class SignalService:
             if not is_new_week and not force:
                 continue
 
-            mon, tue, wed = self.provider.get_week_ohlc(symbol)
-            levels = compute_levels(mon, tue, wed)
+            # One symbol's data can be missing (a corporate action drops it from
+            # the day's bhavcopy, the scraper hiccups, etc.). Skip that symbol and
+            # keep computing the rest — never let it kill the whole weekly run.
+            try:
+                mon, tue, wed = self.provider.get_week_ohlc(symbol)
+                levels = compute_levels(mon, tue, wed)
 
-            if is_new_week:
-                buffer = self.repo.roll_buffer(symbol, levels.X)  # roll ONCE/week
-                self.repo.save_signal_state(symbol, SignalState())  # clear state
-            else:
-                cur = self.repo.load_buffer(symbol)
-                buffer = WeekBuffer(
-                    current=levels.X, prev1=cur.prev1, prev2=cur.prev2, prev3=cur.prev3
+                if is_new_week:
+                    buffer = self.repo.roll_buffer(symbol, levels.X)  # roll ONCE/week
+                    self.repo.save_signal_state(symbol, SignalState())  # clear state
+                else:
+                    cur = self.repo.load_buffer(symbol)
+                    buffer = WeekBuffer(
+                        current=levels.X, prev1=cur.prev1, prev2=cur.prev2, prev3=cur.prev3
+                    )
+                    self.repo.set_buffer(symbol, buffer)  # in-place, no roll
+
+                self.repo.save_levels(
+                    symbol, week_id, levels,
+                    avg_x=_avg_x(buffer),
+                    good=_good_invest_from_buffer(buffer),
                 )
-                self.repo.set_buffer(symbol, buffer)  # in-place, no roll
-
-            self.repo.save_levels(
-                symbol, week_id, levels,
-                avg_x=_avg_x(buffer),
-                good=_good_invest_from_buffer(buffer),
-            )
+            except Exception as e:  # noqa: BLE001 - resilience over completeness
+                log.warning("run_weekly: skipping %s (%s)", symbol, e)
         self.repo.set_meta("last_weekly_run_at", _now_iso())
 
     # --- live step: advance every stock's state machine by one tick ---
@@ -93,9 +102,15 @@ class SignalService:
         for symbol in self.provider.get_fno_symbols():
             loaded = self.repo.load_levels(symbol)
             if loaded is None:
-                continue  # weekly hasn't run yet
+                continue  # weekly hasn't run yet (or this symbol was skipped)
             levels, week_id = loaded[0], loaded[1]
-            ltp = self.provider.get_live_price(symbol)
+            # A live-price fetch can fail for one symbol; skip it this tick rather
+            # than abort the whole scan.
+            try:
+                ltp = self.provider.get_live_price(symbol)
+            except Exception as e:  # noqa: BLE001
+                log.warning("scan: no price for %s (%s); skipping this tick", symbol, e)
+                continue
             state, _ = self.repo.load_signal_state(symbol)
             new_state = evaluate_signal(levels, ltp, state)
             self.repo.save_signal_state(symbol, new_state, last_ltp=ltp)
@@ -190,8 +205,27 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# A single shared service instance, wired to the FAKE provider + default DB file.
-# Swapping to real data later = FakeProvider() -> NSEProvider(), one line.
-service = SignalService(FakeProvider())
+def _make_provider() -> DataProvider:
+    """Pick the data source from config. 'nse' = the real scraper; anything else
+    (default) = the safe FakeProvider. If the real provider can't even be built,
+    fall back to fake rather than crash the whole backend on boot."""
+    from app import config
+
+    if config.PROVIDER == "nse":
+        try:
+            from app.nse_provider import NSEProvider
+
+            log.info("data provider: NSEProvider (real NSE data)")
+            return NSEProvider()
+        except Exception as e:  # noqa: BLE001
+            log.error("NSEProvider unavailable (%s); falling back to FakeProvider", e)
+    else:
+        log.info("data provider: FakeProvider (demo data)")
+    return FakeProvider()
+
+
+# A single shared service instance, wired to the configured provider + default DB.
+# Swapping fake <-> real NSE data is now just TRADING_PROVIDER=nse, no code change.
+service = SignalService(_make_provider())
 # Compute levels once (idempotent per week) so the API has data immediately.
 service.run_weekly()

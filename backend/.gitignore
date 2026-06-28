@@ -9,3 +9,6 @@ data/*.db
 
 # Env
 .env
+
+# Throwaway NSE reconnaissance scripts (kept locally, not shipped)
+spikes/
