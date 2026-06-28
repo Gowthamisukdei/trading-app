@@ -41,6 +41,35 @@ export interface HistoryRow {
   resolvedAt: string | null;
 }
 
+// One day's candle, and the full stock-detail payload (see service.build_stock_detail).
+export interface DayOHLC {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+export interface StockDetail {
+  symbol: string;
+  weekId: string;
+  status: Status;
+  ltp: number | null;
+  days: { mon: DayOHLC; tue: DayOHLC; wed: DayOHLC };
+  monTueHigh: number;
+  monTueLow: number;
+  wedInside: boolean;
+  H: number;
+  L: number;
+  X: number;
+  buyT1: number;
+  buyT2: number;
+  buyT3: number;
+  sellT1: number;
+  sellT2: number;
+  sellT3: number;
+  goodInvest: boolean;
+}
+
 export interface Health {
   ok: boolean;
   lastWeeklyRunAt: string | null;
@@ -58,6 +87,14 @@ export async function getSignals(): Promise<Signal[]> {
 export async function getHistory(): Promise<HistoryRow[]> {
   const res = await fetch(`${API_BASE}/api/history`, { cache: "no-store" });
   if (!res.ok) throw new Error(`history: ${res.status}`);
+  return res.json();
+}
+
+export async function getStockDetail(symbol: string): Promise<StockDetail> {
+  const res = await fetch(`${API_BASE}/api/stock/${encodeURIComponent(symbol)}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`stock ${symbol}: ${res.status}`);
   return res.json();
 }
 

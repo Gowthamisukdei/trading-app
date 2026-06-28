@@ -19,7 +19,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.strategy import Levels, SignalState, WeekBuffer
+from app.strategy import Levels, OHLC, SignalState, WeekBuffer
 
 # Where the SQLite file lives. Locally this is backend/data/signals.db. On Railway
 # we set TRADING_DB_PATH to a path on the mounted persistent VOLUME (e.g.
@@ -72,6 +72,18 @@ class Repository:
                 CREATE TABLE IF NOT EXISTS week_buffer (
                     symbol    TEXT PRIMARY KEY,
                     current_x REAL, prev1_x REAL, prev2_x REAL, prev3_x REAL
+                );
+
+                -- The RAW daily candles that fed this week's levels. We keep them
+                -- so the stock-detail page can show exactly what Monday/Tuesday/
+                -- Wednesday traded (like the Excel), not just the derived levels.
+                CREATE TABLE IF NOT EXISTS weekly_ohlc (
+                    symbol  TEXT PRIMARY KEY,
+                    week_id TEXT,
+                    mon_o REAL, mon_h REAL, mon_l REAL, mon_c REAL,
+                    tue_o REAL, tue_h REAL, tue_l REAL, tue_c REAL,
+                    wed_o REAL, wed_h REAL, wed_l REAL, wed_c REAL,
+                    updated_at TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS meta (
@@ -184,6 +196,43 @@ class Repository:
             sell_t1=r["sell_t1"], sell_t2=r["sell_t2"], sell_t3=r["sell_t3"],
         )
         return lv, r["week_id"], r["avg_x"], bool(r["good_invest"])
+
+    # ---------------- raw weekly daily candles (Mon/Tue/Wed OHLC) ----------------
+
+    def save_weekly_ohlc(self, symbol: str, week_id: str,
+                         mon: OHLC, tue: OHLC, wed: OHLC) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO weekly_ohlc (symbol, week_id,
+                    mon_o, mon_h, mon_l, mon_c,
+                    tue_o, tue_h, tue_l, tue_c,
+                    wed_o, wed_h, wed_l, wed_c, updated_at)
+                VALUES (?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    week_id=excluded.week_id,
+                    mon_o=excluded.mon_o, mon_h=excluded.mon_h, mon_l=excluded.mon_l, mon_c=excluded.mon_c,
+                    tue_o=excluded.tue_o, tue_h=excluded.tue_h, tue_l=excluded.tue_l, tue_c=excluded.tue_c,
+                    wed_o=excluded.wed_o, wed_h=excluded.wed_h, wed_l=excluded.wed_l, wed_c=excluded.wed_c,
+                    updated_at=excluded.updated_at
+                """,
+                (symbol, week_id,
+                 mon.open, mon.high, mon.low, mon.close,
+                 tue.open, tue.high, tue.low, tue.close,
+                 wed.open, wed.high, wed.low, wed.close, _now_iso()),
+            )
+
+    def load_weekly_ohlc(self, symbol: str) -> dict[str, OHLC] | None:
+        """Return {'mon': OHLC, 'tue': OHLC, 'wed': OHLC} for the symbol, or None."""
+        with self._connect() as conn:
+            r = conn.execute("SELECT * FROM weekly_ohlc WHERE symbol = ?", (symbol,)).fetchone()
+        if r is None:
+            return None
+        return {
+            "mon": OHLC(r["mon_o"], r["mon_h"], r["mon_l"], r["mon_c"]),
+            "tue": OHLC(r["tue_o"], r["tue_h"], r["tue_l"], r["tue_c"]),
+            "wed": OHLC(r["wed_o"], r["wed_h"], r["wed_l"], r["wed_c"]),
+        }
 
     # ---------------- 4-week rolling buffer (transactional) ----------------
 

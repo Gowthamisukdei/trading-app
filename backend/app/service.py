@@ -77,6 +77,9 @@ class SignalService:
             try:
                 mon, tue, wed = self.provider.get_week_ohlc(symbol)
                 levels = compute_levels(mon, tue, wed)
+                # Keep the raw daily candles so the stock-detail page can show
+                # exactly what Mon/Tue/Wed traded, not just the derived levels.
+                self.repo.save_weekly_ohlc(symbol, week_id, mon, tue, wed)
 
                 if is_new_week:
                     buffer = self.repo.roll_buffer(symbol, levels.X)  # roll ONCE/week
@@ -190,6 +193,42 @@ class SignalService:
                 }
             )
         return rows
+
+    def build_stock_detail(self, symbol: str) -> dict | None:
+        """Everything for one stock's detail page: the raw Mon/Tue/Wed candles,
+        the combined Mon-Tue high/low, the levels/ladders, and current status.
+        Returns None if we have no data for this symbol yet."""
+        symbol = symbol.upper()
+        loaded = self.repo.load_levels(symbol)
+        candles = self.repo.load_weekly_ohlc(symbol)
+        if loaded is None or candles is None:
+            return None
+        levels, week_id, _avg, good = loaded
+        state, last_ltp = self.repo.load_signal_state(symbol)
+
+        def day(o):
+            return {"open": o.open, "high": o.high, "low": o.low, "close": o.close}
+
+        return {
+            "symbol": symbol,
+            "weekId": week_id,
+            "status": state.status,
+            "ltp": last_ltp,
+            "days": {
+                "mon": day(candles["mon"]),
+                "tue": day(candles["tue"]),
+                "wed": day(candles["wed"]),
+            },
+            "monTueHigh": levels.mon_tue_high,
+            "monTueLow": levels.mon_tue_low,
+            "wedInside": levels.wed_inside,
+            "H": levels.H,
+            "L": levels.L,
+            "X": levels.X,
+            "buyT1": levels.buy_t1, "buyT2": levels.buy_t2, "buyT3": levels.buy_t3,
+            "sellT1": levels.sell_t1, "sellT2": levels.sell_t2, "sellT3": levels.sell_t3,
+            "goodInvest": good,
+        }
 
     def health(self) -> dict:
         return {

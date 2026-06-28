@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.db import Repository
 from app.providers import FakeProvider
 from app.service import SignalService
-from app.strategy import SignalState
+from app.strategy import OHLC, SignalState
 
 
 def _temp_repo() -> Repository:
@@ -87,6 +87,21 @@ def test_forced_recompute_same_week_keeps_state_and_buffer():
     assert after_state.status == "BUY", "forced recompute wiped the fired state"
 
 
+def test_weekly_ohlc_round_trip():
+    """The raw Mon/Tue/Wed candles must save and reload intact (this is what the
+    stock-detail page reads)."""
+    repo = _temp_repo()
+    mon = OHLC(10.0, 12.0, 9.0, 11.0)
+    tue = OHLC(11.0, 13.0, 10.5, 12.5)
+    wed = OHLC(12.0, 12.5, 11.5, 12.0)
+    repo.save_weekly_ohlc("ACME", "2026-W26", mon, tue, wed)
+    got = repo.load_weekly_ohlc("ACME")
+    assert got is not None
+    assert (got["mon"].open, got["mon"].high, got["mon"].low, got["mon"].close) == (10.0, 12.0, 9.0, 11.0)
+    assert got["wed"].close == 12.0
+    assert repo.load_weekly_ohlc("NOPE") is None
+
+
 def test_state_survives_simulated_restart():
     """Scan to a BUY, then build a BRAND NEW service on the SAME db file
     (simulating a process restart). The BUY must still be there."""
@@ -114,6 +129,7 @@ def _run_standalone() -> int:
         ("roll buffer shifts across weeks", test_roll_buffer_shifts_across_weeks),
         ("weekly is idempotent in same week", test_weekly_idempotent_then_force),
         ("forced recompute keeps state & buffer", test_forced_recompute_same_week_keeps_state_and_buffer),
+        ("weekly ohlc round-trip", test_weekly_ohlc_round_trip),
         ("state survives a restart", test_state_survives_simulated_restart),
     ]
     all_ok = True

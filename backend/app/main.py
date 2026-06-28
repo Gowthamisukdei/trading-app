@@ -16,7 +16,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.scheduler import create_scheduler
@@ -67,6 +67,16 @@ def health():
 def signals():
     """The main feed: one row per stock with its status and target ladder."""
     return service.build_signals()
+
+
+@app.get("/api/stock/{symbol}")
+def stock_detail(symbol: str):
+    """One stock's detail: raw Mon/Tue/Wed candles + combined Mon-Tue high/low +
+    levels/ladders + current status. 404 if we have no data for it."""
+    detail = service.build_stock_detail(symbol)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"no data for {symbol}")
+    return detail
 
 
 @app.get("/api/history")

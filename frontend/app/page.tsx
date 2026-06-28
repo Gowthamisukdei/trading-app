@@ -216,7 +216,11 @@ export default function Dashboard() {
               const lad = ladder(s);
               return (
                 <tr key={s.symbol} className="hover:bg-zinc-900/40">
-                  <td className="px-4 py-3 font-medium">{s.symbol}</td>
+                  <td className="px-4 py-3 font-medium">
+                    <Link href={`/stock/${s.symbol}`} className="hover:text-indigo-400 hover:underline">
+                      {s.symbol}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${st.cls}`}
