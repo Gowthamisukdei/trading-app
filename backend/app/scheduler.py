@@ -2,8 +2,8 @@
 scheduler.py — makes the backend run itself.
 
 Two jobs, both in IST:
-  * WEEKLY: every Wednesday 15:45 (after close), recompute levels + roll the
-    4-week buffer. Skipped on holidays.
+  * WEEKLY: every Wednesday 18:30 IST (after the EOD bhavcopy is published),
+    recompute levels + roll the 4-week buffer. Skipped on holidays.
   * LIVE SCAN: every SCAN_MINUTES (default 15), but only acts while the market
     is open (09:15-15:30, trading days). Outside those hours it's a no-op.
 
@@ -21,7 +21,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.config import DEV_MODE, DEV_SCAN_SECONDS, SCAN_MINUTES
+from app.config import DEV_MODE, DEV_SCAN_SECONDS, SCAN_MINUTES, WEEKLY_HOUR, WEEKLY_MINUTE
 from app.market_calendar import IST, is_market_open, is_trading_day, now_ist
 from app.service import SignalService
 
@@ -61,11 +61,13 @@ def create_scheduler(service: SignalService) -> BackgroundScheduler:
         )
         log.info("live scan every %s min during market hours", SCAN_MINUTES)
 
-    # --- weekly compute job: Wednesday 15:45 IST ---
+    # --- weekly compute job: Wednesday WEEKLY_HOUR:WEEKLY_MINUTE IST ---
+    # Default 18:30 so Wednesday's end-of-day bhavcopy is already published.
     sched.add_job(
         weekly_job,
-        CronTrigger(day_of_week="wed", hour=15, minute=45, timezone=IST),
+        CronTrigger(day_of_week="wed", hour=WEEKLY_HOUR, minute=WEEKLY_MINUTE, timezone=IST),
         id="weekly", replace_existing=True, max_instances=1, coalesce=True,
     )
+    log.info("weekly compute scheduled for Wed %02d:%02d IST", WEEKLY_HOUR, WEEKLY_MINUTE)
 
     return sched

@@ -27,6 +27,14 @@ DEV_SCAN_SECONDS: int = int(os.getenv("TRADING_DEV_SCAN_SECONDS", "5"))
 # need finer resolution. Tune via TRADING_SCAN_MINUTES without a code change.
 SCAN_MINUTES: int = int(os.getenv("TRADING_SCAN_MINUTES", "15"))
 
+# When the weekly levels are computed (IST), every Wednesday. Default 18:30 — the
+# strategy needs Wednesday's daily OHLC, which comes from NSE's end-of-day
+# bhavcopy. That file is published AFTER the 15:30 close, usually not until the
+# evening, so we wait until 18:30 to be sure it exists. Running later doesn't
+# change WHAT we compute (it's all closed-day data) — only that the data is ready.
+WEEKLY_HOUR: int = int(os.getenv("TRADING_WEEKLY_HOUR", "18"))
+WEEKLY_MINUTE: int = int(os.getenv("TRADING_WEEKLY_MINUTE", "30"))
+
 # Which data source to use: "fake" (the 3 hardcoded demo stocks) or "nse" (the
 # real NSE scraper). Defaults to fake so nothing breaks if the scraper has a bad
 # day; flip to nse via TRADING_PROVIDER=nse once the scraper is verified.
