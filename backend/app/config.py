@@ -35,6 +35,14 @@ SCAN_MINUTES: int = int(os.getenv("TRADING_SCAN_MINUTES", "15"))
 WEEKLY_HOUR: int = int(os.getenv("TRADING_WEEKLY_HOUR", "18"))
 WEEKLY_MINUTE: int = int(os.getenv("TRADING_WEEKLY_MINUTE", "30"))
 
+# Delay (milliseconds) between per-stock live-price calls within one scan. There's
+# no bulk live endpoint, so tracking all ~211 F&O stocks means one NSE call each;
+# a small gap spreads them into a trickle instead of a burst, so NSE doesn't see
+# a flood and block our session. Default 0 (instant) for fake/dev/tests; set to
+# ~300 in production when tracking the full list. At 300ms, 211 stocks take ~1 min
+# per scan — fine on a 15-min interval.
+SCAN_THROTTLE_MS: int = int(os.getenv("TRADING_SCAN_THROTTLE_MS", "0"))
+
 # Which data source to use: "fake" (the 3 hardcoded demo stocks) or "nse" (the
 # real NSE scraper). Defaults to fake so nothing breaks if the scraper has a bad
 # day; flip to nse via TRADING_PROVIDER=nse once the scraper is verified.

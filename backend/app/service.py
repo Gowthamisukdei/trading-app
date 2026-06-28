@@ -14,6 +14,7 @@ evaluate_signal) is unchanged from before: only the storage swapped.
 """
 
 import logging
+import time
 from datetime import date, datetime, timezone
 
 from app.db import Repository
@@ -102,6 +103,9 @@ class SignalService:
 
     # --- live step: advance every stock's state machine by one tick ---
     def scan(self) -> None:
+        from app.config import SCAN_THROTTLE_MS
+
+        throttle = SCAN_THROTTLE_MS / 1000.0  # seconds between live-price calls
         for symbol in self.provider.get_fno_symbols():
             loaded = self.repo.load_levels(symbol)
             if loaded is None:
@@ -114,6 +118,9 @@ class SignalService:
             except Exception as e:  # noqa: BLE001
                 log.warning("scan: no price for %s (%s); skipping this tick", symbol, e)
                 continue
+            # Trickle the calls so tracking all ~211 stocks doesn't burst NSE.
+            if throttle:
+                time.sleep(throttle)
             state, _ = self.repo.load_signal_state(symbol)
             new_state = evaluate_signal(levels, ltp, state)
             self.repo.save_signal_state(symbol, new_state, last_ltp=ltp)
