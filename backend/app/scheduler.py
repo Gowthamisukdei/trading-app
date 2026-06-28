@@ -4,8 +4,8 @@ scheduler.py — makes the backend run itself.
 Two jobs, both in IST:
   * WEEKLY: every Wednesday 15:45 (after close), recompute levels + roll the
     4-week buffer. Skipped on holidays.
-  * LIVE SCAN: every 5 minutes, but only acts while the market is open
-    (09:15-15:30, trading days). Outside those hours it's a no-op.
+  * LIVE SCAN: every SCAN_MINUTES (default 15), but only acts while the market
+    is open (09:15-15:30, trading days). Outside those hours it's a no-op.
 
 The jobs only DECIDE when to call the SignalService; all the real work lives in
 service.py and the strategy engine. APScheduler runs them on a background thread
@@ -21,7 +21,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.config import DEV_MODE, DEV_SCAN_SECONDS
+from app.config import DEV_MODE, DEV_SCAN_SECONDS, SCAN_MINUTES
 from app.market_calendar import IST, is_market_open, is_trading_day, now_ist
 from app.service import SignalService
 
@@ -56,9 +56,10 @@ def create_scheduler(service: SignalService) -> BackgroundScheduler:
         log.warning("DEV MODE: scanning every %ss, ignoring market hours", DEV_SCAN_SECONDS)
     else:
         sched.add_job(
-            scan_job, IntervalTrigger(minutes=5),
+            scan_job, IntervalTrigger(minutes=SCAN_MINUTES),
             id="scan", replace_existing=True, max_instances=1, coalesce=True,
         )
+        log.info("live scan every %s min during market hours", SCAN_MINUTES)
 
     # --- weekly compute job: Wednesday 15:45 IST ---
     sched.add_job(

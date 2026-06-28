@@ -17,8 +17,15 @@ def _flag(name: str) -> bool:
 # this in production — there the real market-hours gate must apply.
 DEV_MODE: bool = _flag("TRADING_DEV")
 
-# How often to scan in dev mode (seconds). In production the scan is every 5 min.
+# How often to scan in dev mode (seconds). In production the scan is every
+# SCAN_MINUTES (below).
 DEV_SCAN_SECONDS: int = int(os.getenv("TRADING_DEV_SCAN_SECONDS", "5"))
+
+# How often the live scan runs in production, in minutes. Default 15: with ~211
+# F&O stocks the scan makes one NSE call per stock (no bulk live endpoint), so a
+# gentle interval avoids rate-limiting/blocks. A weekly swing strategy doesn't
+# need finer resolution. Tune via TRADING_SCAN_MINUTES without a code change.
+SCAN_MINUTES: int = int(os.getenv("TRADING_SCAN_MINUTES", "15"))
 
 # Which data source to use: "fake" (the 3 hardcoded demo stocks) or "nse" (the
 # real NSE scraper). Defaults to fake so nothing breaks if the scraper has a bad
