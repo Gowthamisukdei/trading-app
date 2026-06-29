@@ -32,6 +32,10 @@ log = logging.getLogger(__name__)
 
 MASTER_QUOTE = "https://www.nseindia.com/api/master-quote"
 OPTION_CHAIN = "https://www.nseindia.com/api/option-chain-equities?symbol={sym}"
+PREOPEN_FO = "https://www.nseindia.com/api/market-data-pre-open?key=FO"
+PREOPEN_REFERER = (
+    "https://www.nseindia.com/market-data/pre-open-market-cm-and-emerge-market"
+)
 BHAVCOPY = (
     "https://nsearchives.nseindia.com/content/cm/"
     "BhavCopy_NSE_CM_0_0_0_{ymd}_F_0000.csv.zip"
@@ -128,6 +132,34 @@ class NSEProvider(DataProvider):
         except NSEError as e:
             log.warning("live price for %s failed (%s); using last close", sym, e)
         return self._last_close(sym)
+
+    def get_all_live_prices(self) -> dict[str, float]:
+        """ONE call for every F&O stock's live price, instead of one call per
+        symbol. Hits the pre-open/quotes feed that backs NSE's 'Securities in F&O'
+        table and returns {SYMBOL: lastPrice}. Cuts a 211-symbol scan from 211 NSE
+        calls down to 1 — Gowtham's idea.
+
+        CAVEAT: this endpoint is the pre-open snapshot. It is only safe to drive
+        live signals from it if metadata.lastPrice actually updates during
+        continuous trading (09:15-15:30). That is verified separately
+        (spikes/preopen_live_test.py); until confirmed, scan() stays on the
+        per-symbol path. Raises NSEError on failure so the caller can fall back."""
+        data = self._client.get_json(PREOPEN_FO, referer=PREOPEN_REFERER, tries=3)
+        rows = data.get("data") if isinstance(data, dict) else None
+        if not rows:
+            raise NSEError("pre-open FO feed returned no rows")
+        out: dict[str, float] = {}
+        for r in rows:
+            meta = r.get("metadata", {})
+            sym, price = meta.get("symbol"), meta.get("lastPrice")
+            if sym and price:
+                try:
+                    out[str(sym).strip().upper()] = float(price)
+                except (TypeError, ValueError):
+                    continue
+        if not out:
+            raise NSEError("pre-open FO feed had no usable symbol/price rows")
+        return out
 
     def _last_close(self, symbol: str) -> float:
         """Most recent available bhavcopy close for the symbol."""

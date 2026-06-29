@@ -103,9 +103,22 @@ class SignalService:
 
     # --- live step: advance every stock's state machine by one tick ---
     def scan(self) -> None:
-        from app.config import SCAN_THROTTLE_MS
+        from app.config import BULK_LIVE, SCAN_THROTTLE_MS
 
         throttle = SCAN_THROTTLE_MS / 1000.0  # seconds between live-price calls
+
+        # Bulk path: ONE call fetches every stock's live price up front. If it's
+        # enabled and works, we read prices from this dict in the loop (no per-
+        # symbol calls, no throttle). If it fails, bulk stays None and we fall
+        # back to the per-symbol get_live_price below — the scan never aborts.
+        bulk: dict[str, float] | None = None
+        if BULK_LIVE and hasattr(self.provider, "get_all_live_prices"):
+            try:
+                bulk = self.provider.get_all_live_prices()
+                log.info("scan: bulk live prices for %d symbols in one call", len(bulk))
+            except Exception as e:  # noqa: BLE001
+                log.warning("scan: bulk live-price fetch failed (%s); per-symbol fallback", e)
+
         for symbol in self.provider.get_fno_symbols():
             loaded = self.repo.load_levels(symbol)
             if loaded is None:
@@ -114,13 +127,16 @@ class SignalService:
             # A live-price fetch can fail for one symbol; skip it this tick rather
             # than abort the whole scan.
             try:
-                ltp = self.provider.get_live_price(symbol)
+                if bulk is not None and symbol in bulk:
+                    ltp = bulk[symbol]
+                else:
+                    ltp = self.provider.get_live_price(symbol)
+                    # Trickle per-symbol calls so all ~211 stocks don't burst NSE.
+                    if throttle:
+                        time.sleep(throttle)
             except Exception as e:  # noqa: BLE001
                 log.warning("scan: no price for %s (%s); skipping this tick", symbol, e)
                 continue
-            # Trickle the calls so tracking all ~211 stocks doesn't burst NSE.
-            if throttle:
-                time.sleep(throttle)
             state, _ = self.repo.load_signal_state(symbol)
             new_state = evaluate_signal(levels, ltp, state)
             self.repo.save_signal_state(symbol, new_state, last_ltp=ltp)
@@ -273,5 +289,9 @@ def _make_provider() -> DataProvider:
 # A single shared service instance, wired to the configured provider + default DB.
 # Swapping fake <-> real NSE data is now just TRADING_PROVIDER=nse, no code change.
 service = SignalService(_make_provider())
-# Compute levels once (idempotent per week) so the API has data immediately.
-service.run_weekly()
+# NOTE: we deliberately do NOT run the weekly compute here at import time. With the
+# real NSE provider and all ~211 F&O stocks, computing every stock's levels takes
+# long enough that it would block the web server from binding its port on boot —
+# Railway then thinks the app is dead and restarts it, causing a 502 crash loop.
+# Instead main.py kicks off the initial run_weekly() in a BACKGROUND thread inside
+# the app lifespan, so the server answers immediately and levels fill in shortly.

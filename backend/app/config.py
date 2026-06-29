@@ -43,6 +43,15 @@ WEEKLY_MINUTE: int = int(os.getenv("TRADING_WEEKLY_MINUTE", "30"))
 # per scan — fine on a 15-min interval.
 SCAN_THROTTLE_MS: int = int(os.getenv("TRADING_SCAN_THROTTLE_MS", "0"))
 
+# Use the ONE-call bulk live-price feed (market-data-pre-open?key=FO) instead of
+# one option-chain call per symbol. Off by default: this endpoint is the pre-open
+# snapshot, only safe for live signals if its prices actually move during
+# continuous trading (verified via spikes/preopen_live_test.py). Once confirmed
+# LIVE, set TRADING_BULK_LIVE=1 on Railway and the throttle/per-symbol path is no
+# longer needed even for all 211 stocks (1 call covers them all). If the bulk
+# fetch fails mid-scan, scan() falls back to the per-symbol get_live_price.
+BULK_LIVE: bool = _flag("TRADING_BULK_LIVE")
+
 # Which data source to use: "fake" (the 3 hardcoded demo stocks) or "nse" (the
 # real NSE scraper). Defaults to fake so nothing breaks if the scraper has a bad
 # day; flip to nse via TRADING_PROVIDER=nse once the scraper is verified.

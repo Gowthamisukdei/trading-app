@@ -14,6 +14,7 @@ Then open http://127.0.0.1:8000/docs for an interactive API explorer.
 
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -33,6 +34,15 @@ ALLOWED_ORIGINS = [o.strip() for o in _origins.split(",")] if _origins != "*" el
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Compute the initial weekly levels in a BACKGROUND thread, not inline: with
+    # all ~211 F&O stocks on the real NSE provider this takes long enough that
+    # doing it before the server is ready would make Railway time out the boot and
+    # restart us in a 502 loop. Backgrounding it lets the server answer instantly;
+    # /api/signals just returns whatever's already computed until this finishes.
+    threading.Thread(
+        target=service.run_weekly, name="initial-weekly", daemon=True
+    ).start()
+
     # Start the background scheduler when the server boots, stop it on shutdown.
     # This is what makes the backend scan/compute on its own.
     scheduler = create_scheduler(service)
