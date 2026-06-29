@@ -35,6 +35,13 @@ SCAN_MINUTES: int = int(os.getenv("TRADING_SCAN_MINUTES", "15"))
 WEEKLY_HOUR: int = int(os.getenv("TRADING_WEEKLY_HOUR", "18"))
 WEEKLY_MINUTE: int = int(os.getenv("TRADING_WEEKLY_MINUTE", "30"))
 
+# When the DAILY replay runs (IST), every trading day. It re-reads each closed
+# day's High/Low from the bhavcopy and folds any arm/fire into state — the
+# authoritative backfill that the live snapshot scan can't do. Default 19:00, like
+# the weekly compute, because that day's bhavcopy isn't published until the evening.
+REPLAY_HOUR: int = int(os.getenv("TRADING_REPLAY_HOUR", "19"))
+REPLAY_MINUTE: int = int(os.getenv("TRADING_REPLAY_MINUTE", "0"))
+
 # Delay (milliseconds) between per-stock live-price calls within one scan. There's
 # no bulk live endpoint, so tracking all ~211 F&O stocks means one NSE call each;
 # a small gap spreads them into a trickle instead of a burst, so NSE doesn't see

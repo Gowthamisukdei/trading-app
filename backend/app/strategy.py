@@ -201,6 +201,52 @@ def evaluate_signal(levels: Levels, ltp: float, state: SignalState) -> SignalSta
     return state
 
 
+def evaluate_day(levels: Levels, high: float, low: float, state: SignalState) -> SignalState:
+    """Advance the state machine using ONE day's High and Low (from the daily
+    bhavcopy), instead of a single live snapshot.
+
+    This is how the strategy is really meant to be read off the daily candles, and
+    it fixes two holes in the live-snapshot scan:
+      * it catches an arm/fire that happened on a day we WEREN'T live-scanning
+        (e.g. before the backend went live, or across a restart), and
+      * it catches a price that WICKED through a level and reversed within a scan
+        gap — the day's High/Low sees the touch, a 15-min snapshot might miss it.
+
+    Same rules as evaluate_signal, but the day's EXTREME does the crossing:
+      * armed BUY  fires if the day's HIGH reached buy_t1   (entry)
+      * armed SELL fires if the day's LOW  reached sell_t1  (entry)
+      * not armed: a day whose LOW broke below the floor arms BUY; whose HIGH
+        broke above the ceiling arms SELL.
+
+    Conservative SAME-DAY rule: a stock that ARMS on this day does NOT also fire on
+    the same day. Daily OHLC can't tell us whether the High or the Low came first,
+    so we can't prove a same-day fake-then-reverse happened in that order. The
+    multi-day whipsaw the strategy targets (arm one day, fire a LATER day) is
+    unambiguous and handled — the armed state carries into the next day's call.
+    """
+    # 1. Terminal for the week once a real signal has fired.
+    if state.fired_dir is not None:
+        return state
+
+    # 2. Armed -> the day's extreme in the trigger direction confirms the entry.
+    if state.armed_dir == "BUY":
+        if high >= levels.buy_t1:
+            return SignalState(armed_dir="BUY", fired_dir="BUY")
+        return state
+    if state.armed_dir == "SELL":
+        if low <= levels.sell_t1:
+            return SignalState(armed_dir="SELL", fired_dir="SELL")
+        return state
+
+    # 3. Not armed yet -> a day that broke the floor/ceiling arms the setup.
+    if low < levels.mon_tue_low:
+        return SignalState(armed_dir="BUY")
+    if high > levels.mon_tue_high:
+        return SignalState(armed_dir="SELL")
+
+    return state
+
+
 # ---------------------------------------------------------------------------
 # WEEK-ROLLING BUFFER — keep current + previous 3 weeks per stock
 # ---------------------------------------------------------------------------

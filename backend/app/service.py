@@ -18,9 +18,15 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 from app.db import Repository
-from app.market_calendar import IST
+from app.market_calendar import IST, is_trading_day
 from app.providers import DataProvider, FakeProvider
-from app.strategy import SignalState, WeekBuffer, compute_levels, evaluate_signal
+from app.strategy import (
+    SignalState,
+    WeekBuffer,
+    compute_levels,
+    evaluate_day,
+    evaluate_signal,
+)
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +119,80 @@ class SignalService:
             except Exception as e:  # noqa: BLE001 - resilience over completeness
                 log.warning("run_weekly: skipping %s (%s)", symbol, e)
         self.repo.set_meta("last_weekly_run_at", _now_iso())
+        # Fold in every trading day that has closed since the levels' Wednesday, so
+        # an arm/fire from a day we weren't live-scanning is recovered immediately.
+        self.replay_days()
+
+    # --- daily backfill: rebuild state from each day's High/Low since Wednesday ---
+    def replay_days(self, today: date | None = None) -> None:
+        """Rebuild each stock's armed/fired state from the DAILY High/Low of every
+        trading day since the levels' Wednesday.
+
+        Why this exists: the live scan only sees the price at the instant it looks
+        (every 15 min, and only once we're running). Anything that happened on a
+        day we weren't watching — or that wicked through a level between scans — is
+        invisible to it. The daily bhavcopy High/Low is the complete record, so
+        replaying it is how we match the Excel and never miss a setup.
+
+        Idempotent and restart-proof: state is recomputed from immutable bhavcopy,
+        so re-running gives the same answer and a redeploy can't lose an arm. We
+        never DOWNGRADE state the live scan already advanced today (we keep
+        whichever is further along the machine), so today's intraday arm/fire isn't
+        wiped by a replay that only covers up to the last completed day.
+        """
+        get_days = getattr(self.provider, "get_week_days", None)
+        if get_days is None:
+            return  # provider can't date the week (e.g. FakeProvider) -> nothing to do
+        try:
+            _, _, wed = get_days()
+        except Exception as e:  # noqa: BLE001
+            log.warning("replay: cannot resolve week days (%s); skipping", e)
+            return
+
+        if today is None:
+            today = datetime.now(IST).date()
+        days = [d for d in _daterange(wed + timedelta(days=1), today) if is_trading_day(d)]
+        # Keep only days whose bhavcopy is actually published (skips today before the
+        # close). Probing once per day here also caches each file, so the per-symbol
+        # loop below reads from memory instead of re-downloading.
+        has_data = getattr(self.provider, "has_daily_data", None)
+        if has_data is not None:
+            days = [d for d in days if has_data(d)]
+        if not days:
+            log.info("replay: no closed trading day since %s yet", wed)
+            return
+
+        rebuilt_n = fired_n = 0
+        for symbol in self.provider.get_fno_symbols():
+            loaded = self.repo.load_levels(symbol)
+            if loaded is None:
+                continue
+            levels, week_id = loaded[0], loaded[1]
+
+            rebuilt = SignalState()
+            saw_day = False
+            for d in days:
+                try:
+                    ohlc = self.provider.get_daily_ohlc(symbol, d)
+                except Exception:  # noqa: BLE001 - symbol missing from that day's file
+                    continue
+                saw_day = True
+                rebuilt = evaluate_day(levels, ohlc.high, ohlc.low, rebuilt)
+            if not saw_day:
+                continue
+
+            prev, prev_ltp = self.repo.load_signal_state(symbol)
+            # Never move backwards: keep whichever state is further along (FIRED >
+            # ARMED > NONE), so a live intraday arm/fire from today survives.
+            merged = rebuilt if _rank(rebuilt) >= _rank(prev) else prev
+            self.repo.save_signal_state(symbol, merged, last_ltp=prev_ltp)
+            rebuilt_n += 1
+            if merged.fired_dir and not prev.fired_dir:
+                self._log_fired(symbol, merged.fired_dir, levels, week_id)
+                fired_n += 1
+        log.info("replay: rebuilt %d symbols over %d day(s); %d newly fired",
+                 rebuilt_n, len(days), fired_n)
+        self.repo.set_meta("last_replay_at", _now_iso())
 
     # --- live step: advance every stock's state machine by one tick ---
     def scan(self) -> None:
@@ -271,9 +351,28 @@ class SignalService:
             "ok": True,
             "lastWeeklyRunAt": self.repo.get_meta("last_weekly_run_at"),
             "lastScanAt": self.repo.get_meta("last_scan_at"),
+            "lastReplayAt": self.repo.get_meta("last_replay_at"),
             "providerStatus": type(self.provider).__name__,
             "trackedSymbols": len(self.provider.get_fno_symbols()),
         }
+
+
+def _rank(state: SignalState) -> int:
+    """How far along the state machine a state is: FIRED(2) > ARMED(1) > NONE(0).
+    The replay uses this to merge without ever downgrading live-scan progress."""
+    if state.fired_dir:
+        return 2
+    if state.armed_dir:
+        return 1
+    return 0
+
+
+def _daterange(start: date, end: date):
+    """Yield every calendar date from start to end inclusive."""
+    d = start
+    while d <= end:
+        yield d
+        d += timedelta(days=1)
 
 
 def _now_iso() -> str:

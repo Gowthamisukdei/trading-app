@@ -110,3 +110,12 @@ def run_weekly():
     """Force a weekly recompute (recomputes levels, clears armed/fired state)."""
     service.run_weekly()
     return {"weeklyRan": True, **service.health()}
+
+
+@app.post("/api/replay-now")
+def replay_now():
+    """Force the daily backfill right now: re-read each closed day's High/Low since
+    the levels' Wednesday and fold any arm/fire into state. Recovers setups that
+    happened on a day the live scan wasn't running. Safe to call repeatedly."""
+    service.replay_days()
+    return {"replayed": True, **service.health()}

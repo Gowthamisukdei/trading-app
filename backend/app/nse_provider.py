@@ -87,6 +87,18 @@ class NSEProvider(DataProvider):
             self.get_daily_ohlc(symbol, wed),
         )
 
+    def get_week_days(self) -> tuple[date, date, date]:
+        """The Mon/Tue/Wed dates whose bhavcopies built the current levels. The
+        daily replay uses Wednesday as its anchor: it walks every trading day
+        AFTER it, checking each day's High/Low against the levels."""
+        return self._resolve_week_days()
+
+    def has_daily_data(self, day: date) -> bool:
+        """True if that day's bhavcopy exists (i.e. it's a completed trading day
+        whose EOD file is published). Lets the replay skip today before the close
+        without firing 211 doomed downloads for a file that isn't out yet."""
+        return self._bhavcopy_exists(day)
+
     def _resolve_week_days(self, max_weeks_back: int = 6) -> tuple[date, date, date]:
         # Start from the Monday of the current ISO week.
         today = date.today()

@@ -21,7 +21,15 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.config import DEV_MODE, DEV_SCAN_SECONDS, SCAN_MINUTES, WEEKLY_HOUR, WEEKLY_MINUTE
+from app.config import (
+    DEV_MODE,
+    DEV_SCAN_SECONDS,
+    REPLAY_HOUR,
+    REPLAY_MINUTE,
+    SCAN_MINUTES,
+    WEEKLY_HOUR,
+    WEEKLY_MINUTE,
+)
 from app.market_calendar import IST, is_market_open, is_trading_day, now_ist
 from app.service import SignalService
 
@@ -47,6 +55,13 @@ def create_scheduler(service: SignalService) -> BackgroundScheduler:
             return
         service.scan()
 
+    def replay_job() -> None:
+        if not is_trading_day(now_ist().date()):
+            log.info("replay job: holiday, skipping")
+            return
+        service.replay_days()
+        log.info("replay job: daily High/Low folded into state")
+
     # --- live scan job ---
     if DEV_MODE:
         sched.add_job(
@@ -69,5 +84,15 @@ def create_scheduler(service: SignalService) -> BackgroundScheduler:
         id="weekly", replace_existing=True, max_instances=1, coalesce=True,
     )
     log.info("weekly compute scheduled for Wed %02d:%02d IST", WEEKLY_HOUR, WEEKLY_MINUTE)
+
+    # --- daily replay job: every trading day REPLAY_HOUR:REPLAY_MINUTE IST ---
+    # Folds the just-closed day's High/Low into state once its bhavcopy is out, so
+    # an arm/fire is never lost to a missed scan or a restart. Idempotent.
+    sched.add_job(
+        replay_job,
+        CronTrigger(hour=REPLAY_HOUR, minute=REPLAY_MINUTE, timezone=IST),
+        id="replay", replace_existing=True, max_instances=1, coalesce=True,
+    )
+    log.info("daily replay scheduled for %02d:%02d IST", REPLAY_HOUR, REPLAY_MINUTE)
 
     return sched
