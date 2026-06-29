@@ -174,12 +174,25 @@ class NSEProvider(DataProvider):
         return out
 
     def _last_close(self, symbol: str) -> float:
-        """Most recent available bhavcopy close for the symbol."""
-        mon, tue, wed = self._resolve_week_days()
-        ohlc = self._bhavcopy(wed).get(symbol)
-        if ohlc is None:
-            raise NSEError(f"no last close available for {symbol}")
-        return ohlc.close
+        """The symbol's MOST RECENT available bhavcopy close. Walk back day-by-day
+        from today to the latest trading day whose bhavcopy is published — so when
+        no live price is available (market closed, or option-chain empty for this
+        symbol) we show the freshest close, not a stale one.
+
+        Bug this fixes: the old version always read the LEVELS-week Wednesday close,
+        so every stock without a live price was frozen at last Wednesday's price
+        even days later (e.g. BOSCHLTD stuck at its 6/24 close on the following
+        Monday). Each day's file is cached, so the walk is cheap."""
+        day = date.today()
+        for _ in range(10):  # look back ~10 days to clear a weekend + holidays
+            try:
+                ohlc = self._bhavcopy(day).get(symbol)
+                if ohlc is not None:
+                    return ohlc.close
+            except NSEError:
+                pass  # that day's bhavcopy isn't published (weekend/holiday/today)
+            day -= timedelta(days=1)
+        raise NSEError(f"no recent close available for {symbol}")
 
 
 def _parse_bhavcopy(raw_zip: bytes) -> dict[str, OHLC]:
