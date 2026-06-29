@@ -15,9 +15,10 @@ evaluate_signal) is unchanged from before: only the storage swapped.
 
 import logging
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from app.db import Repository
+from app.market_calendar import IST
 from app.providers import DataProvider, FakeProvider
 from app.strategy import SignalState, WeekBuffer, compute_levels, evaluate_signal
 
@@ -25,11 +26,23 @@ log = logging.getLogger(__name__)
 
 
 def current_week_id(today: date | None = None) -> str:
-    """A stable id for "this trading week", e.g. 2026-W26. Drives idempotency:
-    we compute a stock's weekly levels at most once per calendar week, so a
-    restart (which re-runs run_weekly) does NOT re-roll the buffer or wipe state."""
-    today = today or date.today()
-    year, week, _ = today.isocalendar()
+    """A stable id for the current TRADING CYCLE, e.g. 2026-W26. Drives idempotency:
+    weekly levels are computed (and the buffer rolled + state cleared) at most once
+    per cycle, so a restart that re-runs run_weekly does NOT re-roll or wipe state.
+
+    The cycle boundary is WEDNESDAY, not Monday. Fresh levels are computed after
+    Wednesday's close, and an armed setup must stay valid from when it arms until
+    the NEXT Wednesday (it can carry across the weekend into Mon/Tue). We get a
+    Wednesday boundary by shifting the date back 2 days before taking the ISO week:
+    that makes Wed..Tue share one id which flips each Wednesday — exactly when the
+    weekly job rolls the buffer and clears state. (Keying on the plain ISO Monday
+    boundary, as before, wiped armed state every Monday — two days too early.)
+
+    Uses IST, not the server's UTC date, so the boundary lands on the right day on
+    Railway (whose clock is UTC)."""
+    if today is None:
+        today = datetime.now(IST).date()
+    year, week, _ = (today - timedelta(days=2)).isocalendar()
     return f"{year}-W{week:02d}"
 
 
