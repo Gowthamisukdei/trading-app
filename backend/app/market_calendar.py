@@ -21,10 +21,31 @@ MARKET_CLOSE = time(15, 30)
 # weekday holidays here.
 #
 # 🚨 MUST be kept current each year from the official NSE holiday calendar
-# (nseindia.com). An out-of-date list isn't catastrophic — on a missed holiday
-# we'd just scan and find stale/empty data — but the weekly compute could land
-# on the wrong day. Update this set every year.
-NSE_HOLIDAYS: set[date] = set()
+# (nseindia.com → "Market Timings & Holidays"). An out-of-date list isn't
+# catastrophic — on a missed holiday we'd just scan and find stale/empty data —
+# but the weekly compute could land on the wrong day. Update this set every year.
+#
+# 2026 NSE equity trading holidays (weekday closures only; weekend holidays like
+# Diwali-Laxmi Pujan Sun Nov 8 / Muhurat session are handled by the weekday check).
+# Verified against the NSE calendar via Zerodha + ClearTax (both agree), 2026-06-29.
+NSE_HOLIDAYS: set[date] = {
+    date(2026, 1, 15),   # Municipal Corporation elections (Maharashtra)
+    date(2026, 1, 26),   # Republic Day
+    date(2026, 3, 3),    # Holi
+    date(2026, 3, 26),   # Shri Ram Navami
+    date(2026, 3, 31),   # Shri Mahavir Jayanti
+    date(2026, 4, 3),    # Good Friday
+    date(2026, 4, 14),   # Dr. Baba Saheb Ambedkar Jayanti
+    date(2026, 5, 1),    # Maharashtra Day
+    date(2026, 5, 28),   # Bakri Id
+    date(2026, 6, 26),   # Muharram
+    date(2026, 9, 14),   # Ganesh Chaturthi
+    date(2026, 10, 2),   # Mahatma Gandhi Jayanti
+    date(2026, 10, 20),  # Dussehra
+    date(2026, 11, 10),  # Diwali-Balipratipada
+    date(2026, 11, 24),  # Prakash Gurpurb Sri Guru Nanak Dev
+    date(2026, 12, 25),  # Christmas
+}
 
 
 def now_ist() -> datetime:

@@ -42,6 +42,18 @@ def test_trading_day_weekends_and_holidays():
     assert is_trading_day(WEDNESDAY) is True  # restored
 
 
+def test_real_2026_holidays_loaded():
+    # The official 2026 NSE calendar must be present (16 weekday closures), and a
+    # few known dates must be recognised as non-trading days while ordinary
+    # weekdays around them stay open.
+    assert len(mc.NSE_HOLIDAYS) == 16
+    assert is_trading_day(date(2026, 12, 25)) is False   # Christmas (Fri)
+    assert is_trading_day(date(2026, 10, 20)) is False   # Dussehra (Tue)
+    assert is_trading_day(date(2026, 1, 26)) is False    # Republic Day (Mon)
+    assert is_trading_day(date(2026, 6, 29)) is True      # ordinary Monday
+    assert is_trading_day(date(2026, 12, 24)) is True     # ordinary Thursday
+
+
 def test_market_open_hours():
     assert is_market_open(_ist(WEDNESDAY, time(10, 0))) is True
     assert is_market_open(_ist(WEDNESDAY, time(9, 15))) is True   # open boundary
@@ -67,6 +79,7 @@ def test_timezone_is_converted_not_assumed():
 def _run_standalone() -> int:
     checks = [
         ("trading day: weekends & holidays", test_trading_day_weekends_and_holidays),
+        ("real 2026 NSE holidays loaded", test_real_2026_holidays_loaded),
         ("market open hours & boundaries", test_market_open_hours),
         ("market closed on weekend", test_market_closed_on_weekend),
         ("timezone converted, not assumed", test_timezone_is_converted_not_assumed),
