@@ -31,16 +31,18 @@ from app.strategy import OHLC
 log = logging.getLogger(__name__)
 
 MASTER_QUOTE = "https://www.nseindia.com/api/master-quote"
-OPTION_CHAIN = "https://www.nseindia.com/api/option-chain-equities?symbol={sym}"
-PREOPEN_FO = "https://www.nseindia.com/api/market-data-pre-open?key=FO"
-PREOPEN_REFERER = (
-    "https://www.nseindia.com/market-data/pre-open-market-cm-and-emerge-market"
+# Live LTP for the MOVING stocks, in two calls (top gainers + top losers). This is
+# the WORKING live feed — option-chain-equities returns an empty {} from a server
+# IP even during market hours (see get_live_price). NSE spells losers "loosers".
+LIVE_VARIATIONS = "https://www.nseindia.com/api/live-analysis-variations?index={idx}"
+LIVE_VAR_REFERER = (
+    "https://www.nseindia.com/market-data/live-market-indices/live-analysis"
 )
+_LAV_BUCKETS = ("FOSec", "NIFTY", "BANKNIFTY", "NIFTYNEXT50", "SecGtr20", "SecLwr20")
 BHAVCOPY = (
     "https://nsearchives.nseindia.com/content/cm/"
     "BhavCopy_NSE_CM_0_0_0_{ymd}_F_0000.csv.zip"
 )
-OC_REFERER = "https://www.nseindia.com/option-chain"
 
 
 class NSEProvider(DataProvider):
@@ -131,46 +133,61 @@ class NSEProvider(DataProvider):
     # -- live price --------------------------------------------------------
 
     def get_live_price(self, symbol: str) -> float:
-        """Live underlying value from the option-chain endpoint; if that's empty
-        (market closed) or fails, fall back to the latest bhavcopy close so the
-        app always has a number to evaluate."""
-        sym = symbol.upper()
-        try:
-            data = self._client.get_json(OPTION_CHAIN.format(sym=sym), referer=OC_REFERER, tries=2)
-            if isinstance(data, dict):
-                val = data.get("records", {}).get("underlyingValue")
-                if val:
-                    return float(val)
-        except NSEError as e:
-            log.warning("live price for %s failed (%s); using last close", sym, e)
-        return self._last_close(sym)
+        """Per-symbol price = the most recent bhavcopy close.
+
+        The LIVE last-traded price now comes from the BULK feed
+        (get_all_live_prices, used by scan() when TRADING_BULK_LIVE is on). We no
+        longer call option-chain-equities per symbol: it returns an empty {} from a
+        server IP even during market hours (confirmed live), so it never produced a
+        live price — every stock silently fell back to last close anyway, at the
+        cost of 211 doomed requests per scan. For a symbol the bulk feed didn't
+        cover (a flat stock outside the gainers/losers lists, which can't cross a
+        trigger anyway), the latest close is the right stand-in."""
+        return self._last_close(symbol.upper())
 
     def get_all_live_prices(self) -> dict[str, float]:
-        """ONE call for every F&O stock's live price, instead of one call per
-        symbol. Hits the pre-open/quotes feed that backs NSE's 'Securities in F&O'
-        table and returns {SYMBOL: lastPrice}. Cuts a 211-symbol scan from 211 NSE
-        calls down to 1 — Gowtham's idea.
+        """LIVE last-traded price for every MOVING F&O stock, in two NSE calls (top
+        gainers + top losers across the NIFTY / BankNifty / NiftyNext50 / F&O
+        buckets of live-analysis-variations). Returns {SYMBOL: ltp}. Cuts a
+        211-symbol scan from ~211 NSE calls down to 2.
 
-        CAVEAT: this endpoint is the pre-open snapshot. It is only safe to drive
-        live signals from it if metadata.lastPrice actually updates during
-        continuous trading (09:15-15:30). That is verified separately
-        (spikes/preopen_live_test.py); until confirmed, scan() stays on the
-        per-symbol path. Raises NSEError on failure so the caller can fall back."""
-        data = self._client.get_json(PREOPEN_FO, referer=PREOPEN_REFERER, tries=3)
-        rows = data.get("data") if isinstance(data, dict) else None
-        if not rows:
-            raise NSEError("pre-open FO feed returned no rows")
+        Why this and not option-chain: option-chain-equities returns an empty {}
+        from a server IP during market hours (confirmed), so the old per-symbol
+        live path froze every stock at last close. live-analysis-variations is the
+        working live feed (verified updating intraday). It only lists stocks that
+        are MOVING — about half the universe — which is exactly right: a flat stock
+        can't cross a trigger, so the bulk feed covers every stock that could fire,
+        and the rest fall back to last close in scan(). Raises NSEError only if
+        BOTH calls fail, so scan() can fall back to the per-symbol path."""
         out: dict[str, float] = {}
-        for r in rows:
-            meta = r.get("metadata", {})
-            sym, price = meta.get("symbol"), meta.get("lastPrice")
-            if sym and price:
-                try:
-                    out[str(sym).strip().upper()] = float(price)
-                except (TypeError, ValueError):
-                    continue
+        errors = 0
+        for idx in ("gainers", "loosers"):  # NSE spells the losers index "loosers"
+            try:
+                data = self._client.get_json(
+                    LIVE_VARIATIONS.format(idx=idx), referer=LIVE_VAR_REFERER, tries=3
+                )
+            except NSEError as e:
+                log.warning("live-analysis %s failed (%s)", idx, e)
+                errors += 1
+                continue
+            if not isinstance(data, dict):
+                continue
+            for bucket in _LAV_BUCKETS:
+                b = data.get(bucket)
+                rows = b.get("data") if isinstance(b, dict) else None
+                for r in rows or []:
+                    sym = str(r.get("symbol") or "").strip().upper()
+                    ltp = r.get("ltp")
+                    if not sym or ltp is None:
+                        continue
+                    try:
+                        out[sym] = float(ltp)
+                    except (TypeError, ValueError):
+                        continue
         if not out:
-            raise NSEError("pre-open FO feed had no usable symbol/price rows")
+            raise NSEError(
+                f"live-analysis-variations yielded no prices ({errors} call errors)"
+            )
         return out
 
     def _last_close(self, symbol: str) -> float:
