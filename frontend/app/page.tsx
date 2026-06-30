@@ -214,6 +214,22 @@ export default function Dashboard() {
             {rows.map((s) => {
               const st = STATUS_STYLE[s.status];
               const lad = ladder(s);
+              // A target is "hit" once the live price reaches it: a BUY ladder
+              // climbs (ltp >= target), a SELL ladder falls (ltp <= target).
+              const dir =
+                s.status === "BUY" || s.status === "ARMED_BUY"
+                  ? "buy"
+                  : s.status === "SELL" || s.status === "ARMED_SELL"
+                  ? "sell"
+                  : null;
+              const hit = (target: number) =>
+                lad != null &&
+                s.ltp != null &&
+                dir != null &&
+                (dir === "buy" ? s.ltp >= target : s.ltp <= target);
+              // Hit target = bright like T1; not-yet-hit = dimmed.
+              const tgtCls = (target: number) =>
+                hit(target) ? "text-zinc-100" : "text-zinc-400";
               return (
                 <tr key={s.symbol} className="hover:bg-zinc-900/40">
                   <td className="px-4 py-3 font-medium">
@@ -233,10 +249,10 @@ export default function Dashboard() {
                     {fmt(s.monTueLow)} – {fmt(s.monTueHigh)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">{lad ? fmt(lad.entry) : "—"}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-zinc-400">
+                  <td className={`px-4 py-3 text-right tabular-nums ${lad ? tgtCls(lad.t2) : "text-zinc-400"}`}>
                     {lad ? fmt(lad.t2) : "—"}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-zinc-400">
+                  <td className={`px-4 py-3 text-right tabular-nums ${lad ? tgtCls(lad.t3) : "text-zinc-400"}`}>
                     {lad ? fmt(lad.t3) : "—"}
                   </td>
                   <td className="px-4 py-3">
