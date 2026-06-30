@@ -95,12 +95,14 @@ def compute_levels(monday: OHLC, tuesday: OHLC, wednesday: OHLC) -> Levels:
         L = mon_tue_low
     X = H - L
 
-    # --- Step 3: entry levels + target ladders ---
-    #   ENTRY  (continuation): break 23.6% beyond the Mon-Tue box (uses the FULL
-    #          box, not the inside-day-tightened H/L — matches the Excel cols N/V).
-    #   BUY targets  (above H):   H + X/2,  H + X,  H + 2X
-    #   SELL targets (below L):   L - X/2,  L - X,  L - 2X
-    span = mon_tue_high - mon_tue_low
+    # --- Step 3: entry levels + target ladders (the CONTINUATION play) ---
+    # Both the entry AND the targets are measured off the FULL Mon-Tue box, so they
+    # always nest correctly: box top < buy_level(+23.6%) < T1(+50%) < T2(+100%) <
+    # T3(+200%). We deliberately do NOT use the inside-day-tightened H/X here: on an
+    # inside day that would put T1 *below* the box top and below the entry (the bug
+    # BOSCHLTD exposed). H/L/X stay on the Levels for the compression flag and for
+    # Play 2 (the reverse breakout), where the tightened ladder belongs.
+    span = mon_tue_high - mon_tue_low  # the box range drives entry AND targets
     return Levels(
         mon_tue_high=round(mon_tue_high, _DP),
         mon_tue_low=round(mon_tue_low, _DP),
@@ -110,12 +112,12 @@ def compute_levels(monday: OHLC, tuesday: OHLC, wednesday: OHLC) -> Levels:
         X=round(X, _DP),
         buy_level=round(mon_tue_high + 0.236 * span, _DP),
         sell_level=round(mon_tue_low - 0.236 * span, _DP),
-        buy_t1=round(H + X / 2, _DP),
-        buy_t2=round(H + X, _DP),
-        buy_t3=round(H + 2 * X, _DP),
-        sell_t1=round(L - X / 2, _DP),
-        sell_t2=round(L - X, _DP),
-        sell_t3=round(L - 2 * X, _DP),
+        buy_t1=round(mon_tue_high + span / 2, _DP),
+        buy_t2=round(mon_tue_high + span, _DP),
+        buy_t3=round(mon_tue_high + 2 * span, _DP),
+        sell_t1=round(mon_tue_low - span / 2, _DP),
+        sell_t2=round(mon_tue_low - span, _DP),
+        sell_t3=round(mon_tue_low - 2 * span, _DP),
     )
 
 

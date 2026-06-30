@@ -130,13 +130,13 @@ class SignalService:
 
     # --- one-off: wipe stale state and rebuild with the current engine ---
     def rebuild_state(self) -> dict:
-        """Clear all signal state + history, then rebuild from the daily High/Low
-        replay using the CURRENT engine. Use once after an engine-logic change (the
-        reversal -> continuation switch) so old-model armed/fired states don't
-        survive — the replay's no-downgrade merge would otherwise keep them."""
+        """Full reset to the CURRENT engine: clear old state/history, RECOMPUTE the
+        weekly levels (so a change to compute_levels — e.g. the box-based targets —
+        is actually re-saved, not left stale in the DB), then rebuild state from the
+        daily High/Low replay. Use once after an engine-logic change."""
         self.repo.clear_all_state()
-        self.replay_days()
-        log.info("rebuild_state: cleared old state and replayed with current engine")
+        self.run_weekly(force=True)  # recompute + re-save levels, then replay rebuilds state
+        log.info("rebuild_state: cleared state, recomputed levels, replayed")
         return {"rebuilt": True}
 
     # --- one-off: seed the buffer with real prior-week ranges ---
