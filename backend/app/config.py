@@ -21,11 +21,12 @@ DEV_MODE: bool = _flag("TRADING_DEV")
 # SCAN_MINUTES (below).
 DEV_SCAN_SECONDS: int = int(os.getenv("TRADING_DEV_SCAN_SECONDS", "5"))
 
-# How often the live scan runs in production, in minutes. Default 15: with ~211
-# F&O stocks the scan makes one NSE call per stock (no bulk live endpoint), so a
-# gentle interval avoids rate-limiting/blocks. A weekly swing strategy doesn't
-# need finer resolution. Tune via TRADING_SCAN_MINUTES without a code change.
-SCAN_MINUTES: int = int(os.getenv("TRADING_SCAN_MINUTES", "15"))
+# How often the live scan runs in production, in minutes. Default 5: the bulk live
+# feed (live-analysis-variations) gets every moving stock in just 2 NSE calls per
+# scan, and flat stocks read from cached bhavcopy (no network), so a scan is cheap
+# and won't rate-limit even at 5 min. (Was 15 when each scan made ~211 calls.) Tune
+# via TRADING_SCAN_MINUTES without a code change.
+SCAN_MINUTES: int = int(os.getenv("TRADING_SCAN_MINUTES", "5"))
 
 # When the weekly levels are computed (IST), every Wednesday. Default 18:30 — the
 # strategy needs Wednesday's daily OHLC, which comes from NSE's end-of-day

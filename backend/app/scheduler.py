@@ -4,7 +4,7 @@ scheduler.py — makes the backend run itself.
 Two jobs, both in IST:
   * WEEKLY: every Wednesday 18:30 IST (after the EOD bhavcopy is published),
     recompute levels + roll the 4-week buffer. Skipped on holidays.
-  * LIVE SCAN: every SCAN_MINUTES (default 15), but only acts while the market
+  * LIVE SCAN: every SCAN_MINUTES (default 5), but only acts while the market
     is open (09:15-15:30, trading days). Outside those hours it's a no-op.
 
 The jobs only DECIDE when to call the SignalService; all the real work lives in

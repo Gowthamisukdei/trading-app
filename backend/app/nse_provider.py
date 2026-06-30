@@ -21,6 +21,7 @@ import csv
 import io
 import logging
 import os
+import time
 import zipfile
 from datetime import date, timedelta
 
@@ -43,6 +44,10 @@ BHAVCOPY = (
     "https://nsearchives.nseindia.com/content/cm/"
     "BhavCopy_NSE_CM_0_0_0_{ymd}_F_0000.csv.zip"
 )
+# How long a 404'd bhavcopy day is remembered as missing before we re-probe it.
+# Long enough to skip the not-yet-published TODAY file across a whole scan; short
+# enough that today's file is found within half an hour of its evening publish.
+_MISSING_TTL_S = 1800
 
 
 class NSEProvider(DataProvider):
@@ -52,6 +57,11 @@ class NSEProvider(DataProvider):
         # date (YYYYMMDD) -> {symbol: OHLC} for that day's EQ rows. Bhavcopy is
         # end-of-day and immutable, so once parsed we cache it for the process.
         self._bhav_cache: dict[str, dict[str, OHLC]] = {}
+        # date (YYYYMMDD) -> monotonic time we last got a 404 for that day's file.
+        # Stops a scan from re-downloading TODAY's (not-yet-published) bhavcopy once
+        # per flat stock — that was a ~300s storm. Short TTL so today's file is still
+        # picked up within MISSING_TTL_S of being published in the evening.
+        self._missing_days: dict[str, float] = {}
 
     # -- symbols -----------------------------------------------------------
 
@@ -120,14 +130,27 @@ class NSEProvider(DataProvider):
             return False
 
     def _bhavcopy(self, day: date) -> dict[str, OHLC]:
-        """Download+parse one day's bhavcopy into {symbol: OHLC}; cached per day."""
+        """Download+parse one day's bhavcopy into {symbol: OHLC}; cached per day.
+
+        A recently-404'd day (no file published yet — typically TODAY during market
+        hours) is remembered in _missing_days for MISSING_TTL_S so a single scan
+        doesn't re-download it once per flat stock. The TTL is short enough that
+        today's file is still discovered soon after it's published in the evening."""
         key = day.strftime("%Y%m%d")
         if key in self._bhav_cache:
             return self._bhav_cache[key]
+        missed_at = self._missing_days.get(key)
+        if missed_at is not None and (time.monotonic() - missed_at) < _MISSING_TTL_S:
+            raise NSEError(f"bhavcopy for {key} known-missing (cached)")
         url = BHAVCOPY.format(ymd=key)
-        raw = self._client.get_bytes(url)  # raises NSEError if 404 (non-trading day)
+        try:
+            raw = self._client.get_bytes(url)  # raises NSEError if 404 (non-trading day)
+        except NSEError:
+            self._missing_days[key] = time.monotonic()
+            raise
         parsed = _parse_bhavcopy(raw)
         self._bhav_cache[key] = parsed
+        self._missing_days.pop(key, None)  # it exists now; forget any stale miss
         return parsed
 
     # -- live price --------------------------------------------------------
