@@ -13,7 +13,9 @@ import {
   getHealth,
   getSignals,
   scanNow,
+  type Candles,
   type Health,
+  type Quality,
   type Signal,
   type Status,
 } from "@/lib/api";
@@ -28,6 +30,41 @@ const STATUS_STYLE: Record<Status, { label: string; cls: string }> = {
   ARMED_SELL: { label: "Waiting for SELL", cls: "bg-amber-500/15 text-amber-400 ring-amber-500/30" },
   NONE: { label: "—", cls: "bg-zinc-700/30 text-zinc-400 ring-zinc-600/30" },
 };
+
+// Volatility-tier badge (the Excel's Good invest / Invest / Breakout flags).
+const QUALITY_STYLE: Record<Quality, { label: string; cls: string } | null> = {
+  good: { label: "Good invest", cls: "bg-sky-500/15 text-sky-400 ring-sky-500/30" },
+  invest: { label: "Invest", cls: "bg-teal-500/15 text-teal-400 ring-teal-500/30" },
+  breakout: { label: "Breakout", cls: "bg-orange-500/15 text-orange-400 ring-orange-500/30" },
+  none: null,
+};
+
+// Mon/Tue/Wed candle-quality dots: green = Good (decisive body), grey = Volatile.
+function CandleDots({ candles }: { candles: Candles | null }) {
+  if (!candles) return <span className="text-zinc-600">—</span>;
+  const days: [string, string][] = [
+    ["M", candles.mon],
+    ["T", candles.tue],
+    ["W", candles.wed],
+  ];
+  return (
+    <span className="inline-flex gap-1" title="Mon / Tue / Wed candle quality">
+      {days.map(([d, q]) => (
+        <span
+          key={d}
+          className={`inline-flex h-5 w-5 items-center justify-center rounded text-[10px] font-semibold ${
+            q === "Good"
+              ? "bg-emerald-500/20 text-emerald-400"
+              : "bg-zinc-700/40 text-zinc-500"
+          }`}
+          title={`${d}: ${q}`}
+        >
+          {d}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 type Filter = "all" | "signals" | "armed";
 
@@ -207,6 +244,8 @@ export default function Dashboard() {
               <th className="px-4 py-3 text-right font-medium">Entry (T1)</th>
               <th className="px-4 py-3 text-right font-medium">T2</th>
               <th className="px-4 py-3 text-right font-medium">T3</th>
+              <th className="px-4 py-3 text-right font-medium" title="Mon-Tue range as % of price">Vol %</th>
+              <th className="px-4 py-3 font-medium" title="Mon / Tue / Wed candle quality">Candles</th>
               <th className="px-4 py-3 font-medium">Quality</th>
             </tr>
           </thead>
@@ -255,10 +294,20 @@ export default function Dashboard() {
                   <td className={`px-4 py-3 text-right tabular-nums ${lad ? tgtCls(lad.t3) : "text-zinc-400"}`}>
                     {lad ? fmt(lad.t3) : "—"}
                   </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-zinc-400">
+                    {s.volPct.toFixed(1)}%
+                  </td>
                   <td className="px-4 py-3">
-                    {s.goodInvest && (
-                      <span className="inline-flex rounded-full bg-sky-500/15 px-2.5 py-1 text-xs font-medium text-sky-400 ring-1 ring-sky-500/30">
-                        Good invest
+                    <CandleDots candles={s.candles} />
+                  </td>
+                  <td className="px-4 py-3">
+                    {QUALITY_STYLE[s.quality] && (
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${
+                          QUALITY_STYLE[s.quality]!.cls
+                        }`}
+                      >
+                        {QUALITY_STYLE[s.quality]!.label}
                       </span>
                     )}
                   </td>
@@ -267,7 +316,7 @@ export default function Dashboard() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-zinc-500">
+                <td colSpan={10} className="px-4 py-10 text-center text-zinc-500">
                   No stocks match this filter.
                 </td>
               </tr>

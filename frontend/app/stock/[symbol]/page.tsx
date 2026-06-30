@@ -10,7 +10,9 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
   getStockDetail,
+  type Candle,
   type DayOHLC,
+  type Quality,
   type StockDetail,
   type Status,
 } from "@/lib/api";
@@ -23,13 +25,44 @@ const STATUS_STYLE: Record<Status, { label: string; cls: string }> = {
   NONE: { label: "—", cls: "bg-zinc-700/30 text-zinc-400 ring-zinc-600/30" },
 };
 
+const QUALITY_STYLE: Record<Quality, { label: string; cls: string } | null> = {
+  good: { label: "Good invest", cls: "bg-sky-500/15 text-sky-400 ring-sky-500/30" },
+  invest: { label: "Invest", cls: "bg-teal-500/15 text-teal-400 ring-teal-500/30" },
+  breakout: { label: "Breakout", cls: "bg-orange-500/15 text-orange-400 ring-orange-500/30" },
+  none: null,
+};
+
+// A small pill for a single day's candle grade.
+function CandleBadge({ q }: { q: Candle | undefined }) {
+  if (!q) return <span className="text-zinc-600">—</span>;
+  return (
+    <span
+      className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${
+        q === "Good" ? "bg-emerald-500/20 text-emerald-400" : "bg-zinc-700/40 text-zinc-400"
+      }`}
+    >
+      {q}
+    </span>
+  );
+}
+
 function fmt(n: number | null): string {
   return n == null
     ? "—"
     : n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function DayRow({ label, d, highlight }: { label: string; d: DayOHLC; highlight?: boolean }) {
+function DayRow({
+  label,
+  d,
+  quality,
+  highlight,
+}: {
+  label: string;
+  d: DayOHLC;
+  quality?: Candle;
+  highlight?: boolean;
+}) {
   return (
     <tr className={highlight ? "bg-zinc-900/40" : undefined}>
       <td className="px-4 py-3 font-medium">{label}</td>
@@ -37,6 +70,9 @@ function DayRow({ label, d, highlight }: { label: string; d: DayOHLC; highlight?
       <td className="px-4 py-3 text-right tabular-nums">{fmt(d.high)}</td>
       <td className="px-4 py-3 text-right tabular-nums">{fmt(d.low)}</td>
       <td className="px-4 py-3 text-right tabular-nums">{fmt(d.close)}</td>
+      <td className="px-4 py-3 text-right">
+        <CandleBadge q={quality} />
+      </td>
     </tr>
   );
 }
@@ -107,11 +143,18 @@ export default function StockPage() {
             <span className="text-zinc-400">
               LTP: <span className="text-zinc-200 tabular-nums">{fmt(data.ltp)}</span>
             </span>
-            {data.goodInvest && (
-              <span className="inline-flex rounded-full bg-sky-500/15 px-2.5 py-1 text-xs font-medium text-sky-400 ring-1 ring-sky-500/30">
-                Good invest
+            {QUALITY_STYLE[data.quality] && (
+              <span
+                className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${
+                  QUALITY_STYLE[data.quality]!.cls
+                }`}
+              >
+                {QUALITY_STYLE[data.quality]!.label}
               </span>
             )}
+            <span className="text-zinc-400">
+              Vol: <span className="text-zinc-200 tabular-nums">{data.volPct.toFixed(1)}%</span>
+            </span>
           </div>
 
           {/* the raw daily candles */}
@@ -125,12 +168,13 @@ export default function StockPage() {
                   <th className="px-4 py-3 text-right font-medium">High</th>
                   <th className="px-4 py-3 text-right font-medium">Low</th>
                   <th className="px-4 py-3 text-right font-medium">Close</th>
+                  <th className="px-4 py-3 text-right font-medium" title="Body vs range: a decisive candle or a wicky/choppy one">Candle</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800">
-                <DayRow label="Monday" d={data.days.mon} />
-                <DayRow label="Tuesday" d={data.days.tue} />
-                <DayRow label="Wednesday" d={data.days.wed} highlight={data.wedInside} />
+                <DayRow label="Monday" d={data.days.mon} quality={data.candles?.mon} />
+                <DayRow label="Tuesday" d={data.days.tue} quality={data.candles?.tue} />
+                <DayRow label="Wednesday" d={data.days.wed} quality={data.candles?.wed} highlight={data.wedInside} />
               </tbody>
             </table>
           </div>
@@ -149,7 +193,7 @@ export default function StockPage() {
             <Stat label="Range X" value={fmt(data.X)} />
             <Stat label="H (ceiling)" value={fmt(data.H)} />
             <Stat label="L (floor)" value={fmt(data.L)} />
-            <Stat label="Wed inside-day" value={data.wedInside ? "Yes" : "No"} />
+            <Stat label="Avg X (3 wk)" value={data.avgX == null ? "—" : fmt(data.avgX)} />
           </div>
 
           {/* ladders */}
@@ -172,6 +216,19 @@ export default function StockPage() {
               </div>
             </div>
           </div>
+
+          {/* Fibonacci alternate entry levels (the Excel's BUY/SELL LEVEL cols) */}
+          <h2 className="mt-7 text-sm font-medium text-zinc-400">
+            Fib breakout levels (23.6% beyond the Mon-Tue box)
+          </h2>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <Stat label="Fib BUY level" value={fmt(data.fibBuy)} tone="text-green-400" />
+            <Stat label="Fib SELL level" value={fmt(data.fibSell)} tone="text-red-400" />
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            A second, shallower breakout trigger from the original Excel: 23.6% of the full
+            Mon-Tue range projected above the high / below the low.
+          </p>
         </>
       )}
 

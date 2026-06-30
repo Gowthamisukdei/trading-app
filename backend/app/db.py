@@ -234,6 +234,20 @@ class Repository:
             "wed": OHLC(r["wed_o"], r["wed_h"], r["wed_l"], r["wed_c"]),
         }
 
+    def load_all_weekly_ohlc(self) -> dict[str, dict[str, OHLC]]:
+        """Every symbol's Mon/Tue/Wed candles in ONE query, keyed by symbol. Lets
+        the dashboard compute per-day candle quality for all stocks without a
+        separate read per symbol."""
+        out: dict[str, dict[str, OHLC]] = {}
+        with self._connect() as conn:
+            for r in conn.execute("SELECT * FROM weekly_ohlc").fetchall():
+                out[r["symbol"]] = {
+                    "mon": OHLC(r["mon_o"], r["mon_h"], r["mon_l"], r["mon_c"]),
+                    "tue": OHLC(r["tue_o"], r["tue_h"], r["tue_l"], r["tue_c"]),
+                    "wed": OHLC(r["wed_o"], r["wed_h"], r["wed_l"], r["wed_c"]),
+                }
+        return out
+
     # ---------------- 4-week rolling buffer (transactional) ----------------
 
     def load_buffer(self, symbol: str) -> WeekBuffer:

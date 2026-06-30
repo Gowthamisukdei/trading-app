@@ -21,11 +21,16 @@ from app.db import Repository
 from app.market_calendar import IST, is_trading_day
 from app.providers import DataProvider, FakeProvider
 from app.strategy import (
+    OHLC,
     SignalState,
     WeekBuffer,
+    candle_quality,
     compute_levels,
     evaluate_day,
     evaluate_signal,
+    fib_levels,
+    invest_tier,
+    volatility_pct,
 )
 
 log = logging.getLogger(__name__)
@@ -284,6 +289,9 @@ class SignalService:
 
     # --- read step: shape current state for the dashboard ---
     def build_signals(self) -> list[dict]:
+        # All candles up front (one query) so we can grade each day's quality
+        # without a per-symbol read.
+        all_candles = self.repo.load_all_weekly_ohlc()
         rows: list[dict] = []
         for symbol in self.provider.get_fno_symbols():
             loaded = self.repo.load_levels(symbol)
@@ -291,6 +299,7 @@ class SignalService:
                 continue
             levels, week_id, avg_x, good = loaded
             state, last_ltp = self.repo.load_signal_state(symbol)
+            fib_buy, fib_sell = fib_levels(levels.mon_tue_high, levels.mon_tue_low)
             rows.append(
                 {
                     "symbol": symbol,
@@ -305,6 +314,12 @@ class SignalService:
                     "sellT2": levels.sell_t2,
                     "sellT3": levels.sell_t3,
                     "goodInvest": good,
+                    # --- Excel screening extras ---
+                    "quality": invest_tier(levels.X, avg_x),  # good|invest|breakout|none
+                    "fibBuy": fib_buy,
+                    "fibSell": fib_sell,
+                    "volPct": volatility_pct(levels.mon_tue_high, levels.mon_tue_low),
+                    "candles": _candle_grades(all_candles.get(symbol)),
                     "weekId": week_id,
                 }
             )
@@ -319,8 +334,9 @@ class SignalService:
         candles = self.repo.load_weekly_ohlc(symbol)
         if loaded is None or candles is None:
             return None
-        levels, week_id, _avg, good = loaded
+        levels, week_id, avg_x, good = loaded
         state, last_ltp = self.repo.load_signal_state(symbol)
+        fib_buy, fib_sell = fib_levels(levels.mon_tue_high, levels.mon_tue_low)
 
         def day(o):
             return {"open": o.open, "high": o.high, "low": o.low, "close": o.close}
@@ -344,6 +360,13 @@ class SignalService:
             "buyT1": levels.buy_t1, "buyT2": levels.buy_t2, "buyT3": levels.buy_t3,
             "sellT1": levels.sell_t1, "sellT2": levels.sell_t2, "sellT3": levels.sell_t3,
             "goodInvest": good,
+            # --- Excel screening extras ---
+            "quality": invest_tier(levels.X, avg_x),
+            "avgX": avg_x,
+            "fibBuy": fib_buy,
+            "fibSell": fib_sell,
+            "volPct": volatility_pct(levels.mon_tue_high, levels.mon_tue_low),
+            "candles": _candle_grades(candles),
         }
 
     def health(self) -> dict:
@@ -355,6 +378,14 @@ class SignalService:
             "providerStatus": type(self.provider).__name__,
             "trackedSymbols": len(self.provider.get_fno_symbols()),
         }
+
+
+def _candle_grades(candles: dict[str, OHLC] | None) -> dict[str, str] | None:
+    """Grade Mon/Tue/Wed candles 'Good'/'Volatile' for the UI, or None if we have
+    no candles for this symbol yet."""
+    if not candles:
+        return None
+    return {d: candle_quality(candles[d]) for d in ("mon", "tue", "wed")}
 
 
 def _rank(state: SignalState) -> int:

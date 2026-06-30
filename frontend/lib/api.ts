@@ -9,6 +9,18 @@ export const API_BASE =
 // Mirror of the JSON each /api/signals row returns (see backend service.py).
 export type Status = "NONE" | "ARMED_BUY" | "ARMED_SELL" | "BUY" | "SELL";
 
+// Volatility tier from the Excel: this week's range vs the 3-week average.
+//   good = strong compression, invest = mild, breakout = expansion, none = normal.
+export type Quality = "good" | "invest" | "breakout" | "none";
+
+// Per-day candle grade from the Excel (body vs range).
+export type Candle = "Good" | "Volatile";
+export interface Candles {
+  mon: Candle;
+  tue: Candle;
+  wed: Candle;
+}
+
 export interface Signal {
   symbol: string;
   status: Status;
@@ -22,6 +34,11 @@ export interface Signal {
   sellT2: number;
   sellT3: number;
   goodInvest: boolean;
+  quality: Quality;
+  fibBuy: number;
+  fibSell: number;
+  volPct: number;
+  candles: Candles | null;
   weekId: string;
 }
 
@@ -68,6 +85,12 @@ export interface StockDetail {
   sellT2: number;
   sellT3: number;
   goodInvest: boolean;
+  quality: Quality;
+  avgX: number | null;
+  fibBuy: number;
+  fibSell: number;
+  volPct: number;
+  candles: Candles | null;
 }
 
 export interface Health {

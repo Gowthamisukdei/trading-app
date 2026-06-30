@@ -308,3 +308,72 @@ def good_invest(buffer: WeekBuffer) -> bool:
         return False
     return buffer.current < avg_x / 2
 
+
+# ---------------------------------------------------------------------------
+# EXTRA SCREENING FILTERS — straight from the original weeklyalgo.xlsx
+# ---------------------------------------------------------------------------
+# The Excel didn't just compute levels; it also GRADED each stock so the owner
+# could decide which signals were worth trading. These four pure functions
+# reproduce that grading exactly. None of them change a BUY/SELL — they're
+# decoration the trader screens on.
+
+
+def invest_tier(x: float | None, avg_x: float | None) -> str:
+    """Classify this week's range (X) against the 3-week average range (avgX).
+    Mirrors the Excel's three flags (Good invest / Invest / Breakout):
+
+        x < avgX/2     -> "good"      strong compression (a coiled spring)
+        x < avgX       -> "invest"    mild compression (below-average range)
+        x > 1.5*avgX   -> "breakout"  expansion — an unusually WIDE week
+        otherwise      -> "none"      a normal week, nothing to flag
+
+    Tightest test wins, so "good" takes precedence over "invest". Returns
+    "none" until we have 3 prior weeks of history to average."""
+    if x is None or avg_x is None or avg_x <= 0:
+        return "none"
+    if x < avg_x / 2:
+        return "good"
+    if x < avg_x:
+        return "invest"
+    if x > avg_x * 1.5:
+        return "breakout"
+    return "none"
+
+
+def fib_levels(mon_tue_high: float, mon_tue_low: float) -> tuple[float, float]:
+    """The Excel's SECOND entry trigger: a 23.6% Fibonacci extension beyond the
+    Mon-Tue box (cols N "BUY LEVEL" / V "SELL LEVEL"). Note it uses the FULL
+    Mon-Tue range, not the inside-day-tightened X.
+
+        fibBuy  = monTueHigh + 0.236 * (monTueHigh - monTueLow)
+        fibSell = monTueLow  - 0.236 * (monTueHigh - monTueLow)
+    """
+    span = mon_tue_high - mon_tue_low
+    ext = span * 0.236
+    return round(mon_tue_high + ext, _DP), round(mon_tue_low - ext, _DP)
+
+
+def candle_quality(day: OHLC) -> str:
+    """The Excel's per-day "Good" vs "Volatile" flag (cols E/F/G): is the candle
+    a decisive directional body, or mostly wick (indecision/chop)?
+
+        |open - close| / (high - low) > 0.5  ->  "Good" (strong body)
+        otherwise                            ->  "Volatile" (wicky / choppy)
+    """
+    rng = day.high - day.low
+    if rng <= 0:
+        return "Volatile"  # no range at all -> not a clean directional candle
+    return "Good" if abs(day.open - day.close) / rng > 0.5 else "Volatile"
+
+
+def volatility_pct(mon_tue_high: float, mon_tue_low: float) -> float:
+    """The Excel's "XFH" (col Q): the Mon-Tue range as a PERCENT of price, so you
+    can compare volatility across stocks of very different prices. A ₹5,000 stock
+    with a ₹50 range (1%) is calmer than a ₹140 stock with a ₹10 range (7%).
+
+        range / (price / 100)   where price = monTueHigh
+    """
+    if mon_tue_high <= 0:
+        return 0.0
+    return round((mon_tue_high - mon_tue_low) / (mon_tue_high / 100), _DP)
+
