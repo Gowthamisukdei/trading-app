@@ -128,6 +128,55 @@ class SignalService:
         # an arm/fire from a day we weren't live-scanning is recovered immediately.
         self.replay_days()
 
+    # --- one-off: seed the buffer with real prior-week ranges ---
+    def seed_history(self) -> dict:
+        """Backfill prev1/prev2/prev3 of the rolling buffer with the REAL ranges of
+        the 3 weeks before the current levels week, so the volatility tiers (Good
+        invest / Invest / Breakout) work right now instead of after ~3 Wednesdays.
+
+        One-off and self-correcting: the current slot is left exactly as run_weekly
+        computed it; only history is filled. As real weeks roll in each Wednesday,
+        these seeded ranges shift along and drop off naturally. Per-symbol failures
+        are skipped, never aborting the whole backfill. Returns a small summary."""
+        get_weeks = getattr(self.provider, "get_recent_week_ohlc", None)
+        if get_weeks is None:
+            log.info("seed_history: provider can't fetch history; nothing to do")
+            return {"seeded": 0, "skipped": 0, "supported": False}
+
+        seeded = skipped = 0
+        for symbol in self.provider.get_fno_symbols():
+            loaded = self.repo.load_levels(symbol)
+            if loaded is None:
+                skipped += 1
+                continue
+            levels, week_id = loaded[0], loaded[1]
+            try:
+                weeks = get_weeks(symbol, 4)  # newest first: current, prev1, prev2, prev3
+            except Exception as e:  # noqa: BLE001 - one symbol shouldn't kill the run
+                log.warning("seed_history: skipping %s (%s)", symbol, e)
+                skipped += 1
+                continue
+            if len(weeks) < 4:
+                skipped += 1
+                continue
+
+            xs = [compute_levels(m, t, w).X for (m, t, w) in weeks]
+            cur = self.repo.load_buffer(symbol)
+            buffer = WeekBuffer(
+                current=cur.current if cur.current is not None else xs[0],
+                prev1=xs[1], prev2=xs[2], prev3=xs[3],
+            )
+            self.repo.set_buffer(symbol, buffer)
+            self.repo.save_levels(
+                symbol, week_id, levels,
+                avg_x=_avg_x(buffer), good=_good_invest_from_buffer(buffer),
+            )
+            seeded += 1
+
+        self.repo.set_meta("last_seed_history_at", _now_iso())
+        log.info("seed_history: seeded %d symbols, skipped %d", seeded, skipped)
+        return {"seeded": seeded, "skipped": skipped, "supported": True}
+
     # --- daily backfill: rebuild state from each day's High/Low since Wednesday ---
     def replay_days(self, today: date | None = None) -> None:
         """Rebuild each stock's armed/fired state from the DAILY High/Low of every

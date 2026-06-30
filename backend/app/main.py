@@ -112,6 +112,15 @@ def run_weekly():
     return {"weeklyRan": True, **service.health()}
 
 
+@app.post("/api/seed-history")
+def seed_history():
+    """One-off backfill: fill the 4-week buffer with the last 3 weeks' REAL ranges
+    so the Good invest / Invest / Breakout tiers work now instead of in ~3 weeks.
+    Safe to call again; the current week is never disturbed."""
+    summary = service.seed_history()
+    return {**summary, **service.health()}
+
+
 @app.post("/api/replay-now")
 def replay_now():
     """Force the daily backfill right now: re-read each closed day's High/Low since

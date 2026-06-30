@@ -111,10 +111,42 @@ class NSEProvider(DataProvider):
         without firing 211 doomed downloads for a file that isn't out yet."""
         return self._bhavcopy_exists(day)
 
+    def get_recent_week_ohlc(self, symbol: str, n_weeks: int) -> list[tuple[OHLC, OHLC, OHLC]]:
+        """The last `n_weeks` COMPLETED weeks' Mon/Tue/Wed OHLC for one symbol,
+        NEWEST FIRST ([0] = the current levels week, [1] = the week before, ...).
+        Each step jumps to the prior week that has a full bhavcopy set (a holiday-
+        short week is skipped). Used to SEED the rolling buffer with real history
+        so the volatility tiers work immediately instead of filling over weeks.
+
+        Cheap despite the nesting: all the weeks share the same handful of bhavcopy
+        files, downloaded once and cached, so only the first symbol pays for I/O."""
+        symbol = symbol.upper()
+        weeks: list[tuple[OHLC, OHLC, OHLC]] = []
+        cur_mon, _, _ = self._resolve_week_days()
+        monday = cur_mon
+        while len(weeks) < n_weeks:
+            mon, tue, wed = self._resolve_week_days_from(monday)
+            weeks.append(
+                (
+                    self.get_daily_ohlc(symbol, mon),
+                    self.get_daily_ohlc(symbol, tue),
+                    self.get_daily_ohlc(symbol, wed),
+                )
+            )
+            monday = mon - timedelta(days=7)  # search strictly before this week
+        return weeks
+
     def _resolve_week_days(self, max_weeks_back: int = 6) -> tuple[date, date, date]:
         # Start from the Monday of the current ISO week.
         today = date.today()
-        monday = today - timedelta(days=today.weekday())
+        return self._resolve_week_days_from(today - timedelta(days=today.weekday()), max_weeks_back)
+
+    def _resolve_week_days_from(
+        self, start_monday: date, max_weeks_back: int = 6
+    ) -> tuple[date, date, date]:
+        """Find a complete Mon/Tue/Wed bhavcopy set at `start_monday` or, failing
+        that (e.g. a holiday in that week), the most recent complete week before it."""
+        monday = start_monday
         for _ in range(max_weeks_back):
             mon, tue, wed = monday, monday + timedelta(days=1), monday + timedelta(days=2)
             if all(self._bhavcopy_exists(d) for d in (mon, tue, wed)):
