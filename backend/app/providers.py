@@ -42,9 +42,9 @@ class _FakeStock:
 
     The price script is the clever bit. Each time we 'scan', get_live_price
     returns the next price in the list, so successive scans walk the stock
-    through its story: quiet -> Mon-Tue level broken (armed) -> hits T1 (fires).
-    This lets us watch the state machine come alive on fake data exactly the way
-    it will on real data, just without waiting for a real market day.
+    through its story: quiet -> box broken (armed) -> clears the BUY/SELL LEVEL
+    (enters). This lets us watch the continuation state machine come alive on fake
+    data exactly the way it will on real data, without waiting for a market day.
     """
 
     def __init__(self, mon: OHLC, tue: OHLC, wed: OHLC, price_script: list[float]):
@@ -67,21 +67,21 @@ class FakeProvider(DataProvider):
 
     def __init__(self):
         self._stocks: dict[str, _FakeStock] = {
-            # 360ONE — the real Excel row. Inside-day. Script walks it to a BUY:
-            #   1190 quiet -> 1160 breaks Mon-Tue low (armed buy) -> 1212 >= buy_t1 (BUY)
+            # 360ONE — the real Excel row. Inside-day. buy_level 1230.55. Walks to BUY:
+            #   1190 quiet -> 1220 breaks Mon-Tue high (armed buy) -> 1231 >= buy_level (BUY)
             "360ONE": _FakeStock(
                 mon=OHLC(1179.8, 1188.0, 1165.2, 1170.6),
                 tue=OHLC(1164.4, 1217.9, 1164.3, 1191.6),
                 wed=OHLC(1198.0, 1198.0, 1170.2, 1190.0),
-                price_script=[1190.0, 1160.0, 1212.0],
+                price_script=[1190.0, 1220.0, 1231.0],
             ),
-            # RELIANCE — script walks it to a SELL:
-            #   2900 quiet -> 3010 breaks Mon-Tue high (armed sell) -> 2840 <= sell_t1 (SELL)
+            # RELIANCE — sell_level 2876.4. Walks to a SELL:
+            #   2950 quiet -> 2890 breaks Mon-Tue low (armed sell) -> 2870 <= sell_level (SELL)
             "RELIANCE": _FakeStock(
                 mon=OHLC(2950.0, 2990.0, 2900.0, 2960.0),
                 tue=OHLC(2965.0, 3000.0, 2940.0, 2980.0),
                 wed=OHLC(2975.0, 2995.0, 2955.0, 2970.0),
-                price_script=[2900.0, 3010.0, 2840.0],
+                price_script=[2950.0, 2890.0, 2870.0],
             ),
             # TCS — stays quiet inside its range the whole time (status NONE).
             "TCS": _FakeStock(

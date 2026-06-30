@@ -46,12 +46,18 @@ class Levels:
     L: float              # lower reference level (the "floor")
     X: float              # the range that drives targets
 
-    # BUY ladder — prices ABOVE H. T1 = entry, T3 = final profit target.
+    # ENTRY triggers — the Fibonacci 23.6% breakout beyond the Mon-Tue box.
+    # A continuation BUY enters when price clears buy_level; a SELL at sell_level.
+    buy_level: float
+    sell_level: float
+
+    # BUY target ladder — prices ABOVE H. These are PROFIT TARGETS (not the entry):
+    # T1 = first target (+½X), T2 (+X), T3 (+2X).
     buy_t1: float
     buy_t2: float
     buy_t3: float
 
-    # SELL ladder — prices BELOW L. T1 = entry, T3 = final profit target.
+    # SELL target ladder — prices BELOW L. T1 = first target, T3 = final target.
     sell_t1: float
     sell_t2: float
     sell_t3: float
@@ -89,9 +95,12 @@ def compute_levels(monday: OHLC, tuesday: OHLC, wednesday: OHLC) -> Levels:
         L = mon_tue_low
     X = H - L
 
-    # --- Step 3: target ladders ---
-    #   BUY  (break upward above H):   H + X/2,  H + X,  H + 2X
-    #   SELL (break downward below L): L - X/2,  L - X,  L - 2X
+    # --- Step 3: entry levels + target ladders ---
+    #   ENTRY  (continuation): break 23.6% beyond the Mon-Tue box (uses the FULL
+    #          box, not the inside-day-tightened H/L — matches the Excel cols N/V).
+    #   BUY targets  (above H):   H + X/2,  H + X,  H + 2X
+    #   SELL targets (below L):   L - X/2,  L - X,  L - 2X
+    span = mon_tue_high - mon_tue_low
     return Levels(
         mon_tue_high=round(mon_tue_high, _DP),
         mon_tue_low=round(mon_tue_low, _DP),
@@ -99,6 +108,8 @@ def compute_levels(monday: OHLC, tuesday: OHLC, wednesday: OHLC) -> Levels:
         H=round(H, _DP),
         L=round(L, _DP),
         X=round(X, _DP),
+        buy_level=round(mon_tue_high + 0.236 * span, _DP),
+        sell_level=round(mon_tue_low - 0.236 * span, _DP),
         buy_t1=round(H + X / 2, _DP),
         buy_t2=round(H + X, _DP),
         buy_t3=round(H + 2 * X, _DP),
@@ -117,15 +128,20 @@ def compute_levels(monday: OHLC, tuesday: OHLC, wednesday: OHLC) -> Levels:
 # state; it hands back the NEW state. No memory of its own — the caller stores
 # state in the database so it survives a backend restart.
 #
-# The five possible statuses a stock can be in:
-#   NONE       — nothing happening, just watching
-#   ARMED_BUY  — price faked DOWN below the floor; we're waiting to go LONG
-#   ARMED_SELL — price faked UP above the ceiling; we're waiting to go SHORT
-#   BUY        — armed-buy confirmed: real BUY signal fired
-#   SELL       — armed-sell confirmed: real SELL signal fired
+# This is the CONTINUATION breakout (Play 1, validated by backtest): price breaks
+# out of the Mon-Tue box and we go WITH it once it confirms past the BUY/SELL LEVEL
+# (the 23.6% extension). T1/T2/T3 are profit targets, NOT the entry.
 #
-# The reversal idea: a false break one way ARMS the setup; the real break the
-# OTHER way TRIGGERS the entry.
+# The five possible statuses a stock can be in:
+#   NONE       — inside the box, just watching
+#   ARMED_BUY  — price broke UP above the ceiling; waiting to confirm at buy_level
+#   ARMED_SELL — price broke DOWN below the floor; waiting to confirm at sell_level
+#   BUY        — confirmed: price cleared buy_level -> LONG entered (targets T1/T2/T3)
+#   SELL       — confirmed: price cleared sell_level -> SHORT entered
+#
+# The idea: breaking the box ARMS the setup; clearing the 23.6% level CONFIRMS and
+# ENTERS it. (The rare REVERSE breakout — fake one way then break the other — is a
+# separate play we add later; this engine is the common continuation one.)
 
 STATUS_NONE = "NONE"
 STATUS_ARMED_BUY = "ARMED_BUY"
@@ -164,38 +180,42 @@ def evaluate_signal(levels: Levels, ltp: float, state: SignalState) -> SignalSta
 
     ltp = "last traded price" (the live price right now).
 
-    Order of checks matters:
-      1. Already fired? Then we're locked for the week — return unchanged.
-      2. Armed already? Look only for that direction's TRIGGER:
-           - armed BUY  + price breaks UP   through buy_t1  -> fire BUY
-           - armed SELL + price breaks DOWN through sell_t1 -> fire SELL
-      3. Not armed yet? Look for an ARM:
-           - price drops BELOW mon_tue_low  -> arm BUY  (faked down, expect reversal up)
-           - price rises ABOVE mon_tue_high -> arm SELL (faked up, expect reversal down)
+    CONTINUATION model — the entry is the BUY/SELL LEVEL, not T1:
+      1. Already fired? Locked for the week — return unchanged.
+      2. Armed already? Watch that direction's ENTRY (the 23.6% confirmation):
+           - armed BUY  + price clears buy_level  -> ENTER BUY
+           - armed SELL + price clears sell_level -> ENTER SELL
+      3. Not armed yet? A break of the box ARMS the setup the SAME way:
+           - price rises ABOVE mon_tue_high -> arm BUY  (broke up, may continue)
+           - price drops BELOW mon_tue_low  -> arm SELL (broke down, may continue)
+         If a single tick is already past the level, enter directly (no wait).
 
-    NOTE / decision to confirm with Gowtham: once armed in one direction we keep
-    watching that direction until it fires or the week resets (we do NOT flip to
-    the opposite arm if price later pokes the other extreme). This matches
-    "an armed setup stays valid until the next Wednesday".
+    Once armed we keep watching that direction until it enters or the week resets;
+    we do not flip to the opposite arm (an armed setup stays valid until next Wed).
     """
     # 1. Terminal for the week once a real signal has fired.
     if state.fired_dir is not None:
         return state
 
-    # 2. Armed -> watch for the trigger (entry).
+    # 2. Armed -> watch for the entry (the 23.6% confirmation).
     if state.armed_dir == "BUY":
-        if ltp >= levels.buy_t1:
+        if ltp >= levels.buy_level:
             return SignalState(armed_dir="BUY", fired_dir="BUY")
         return state
     if state.armed_dir == "SELL":
-        if ltp <= levels.sell_t1:
+        if ltp <= levels.sell_level:
             return SignalState(armed_dir="SELL", fired_dir="SELL")
         return state
 
-    # 3. Not armed yet -> watch for an arm (the false break).
-    if ltp < levels.mon_tue_low:
-        return SignalState(armed_dir="BUY")
+    # 3. Not armed yet -> a break of the box arms (or, if already past the level,
+    #    enters straight away) in the SAME direction as the break.
+    if ltp >= levels.buy_level:
+        return SignalState(armed_dir="BUY", fired_dir="BUY")
     if ltp > levels.mon_tue_high:
+        return SignalState(armed_dir="BUY")
+    if ltp <= levels.sell_level:
+        return SignalState(armed_dir="SELL", fired_dir="SELL")
+    if ltp < levels.mon_tue_low:
         return SignalState(armed_dir="SELL")
 
     return state
@@ -212,36 +232,41 @@ def evaluate_day(levels: Levels, high: float, low: float, state: SignalState) ->
       * it catches a price that WICKED through a level and reversed within a scan
         gap — the day's High/Low sees the touch, a 15-min snapshot might miss it.
 
-    Same rules as evaluate_signal, but the day's EXTREME does the crossing:
-      * armed BUY  fires if the day's HIGH reached buy_t1   (entry)
-      * armed SELL fires if the day's LOW  reached sell_t1  (entry)
-      * not armed: a day whose LOW broke below the floor arms BUY; whose HIGH
-        broke above the ceiling arms SELL.
+    Same CONTINUATION rules as evaluate_signal, but the day's EXTREME does the
+    crossing:
+      * armed BUY  enters if the day's HIGH reached buy_level
+      * armed SELL enters if the day's LOW  reached sell_level
+      * not armed: a day whose HIGH cleared buy_level enters BUY directly (else a
+        HIGH above the ceiling arms BUY); a LOW past sell_level enters SELL (else a
+        LOW below the floor arms SELL).
 
-    Conservative SAME-DAY rule: a stock that ARMS on this day does NOT also fire on
-    the same day. Daily OHLC can't tell us whether the High or the Low came first,
-    so we can't prove a same-day fake-then-reverse happened in that order. The
-    multi-day whipsaw the strategy targets (arm one day, fire a LATER day) is
-    unambiguous and handled — the armed state carries into the next day's call.
+    Unlike the old reversal reading, continuation needs no fake-then-reverse order,
+    so a day that breaks out and clears the level can enter the same day — the day's
+    High/Low touching the level IS the breakout. (If a wild outside day hits BOTH
+    levels we can't tell the order, so we resolve BUY first; rare.)
     """
     # 1. Terminal for the week once a real signal has fired.
     if state.fired_dir is not None:
         return state
 
-    # 2. Armed -> the day's extreme in the trigger direction confirms the entry.
+    # 2. Armed -> the day's extreme reaching the level confirms the entry.
     if state.armed_dir == "BUY":
-        if high >= levels.buy_t1:
+        if high >= levels.buy_level:
             return SignalState(armed_dir="BUY", fired_dir="BUY")
         return state
     if state.armed_dir == "SELL":
-        if low <= levels.sell_t1:
+        if low <= levels.sell_level:
             return SignalState(armed_dir="SELL", fired_dir="SELL")
         return state
 
-    # 3. Not armed yet -> a day that broke the floor/ceiling arms the setup.
-    if low < levels.mon_tue_low:
-        return SignalState(armed_dir="BUY")
+    # 3. Not armed yet -> break of the box arms; clearing the level enters.
+    if high >= levels.buy_level:
+        return SignalState(armed_dir="BUY", fired_dir="BUY")
+    if low <= levels.sell_level:
+        return SignalState(armed_dir="SELL", fired_dir="SELL")
     if high > levels.mon_tue_high:
+        return SignalState(armed_dir="BUY")
+    if low < levels.mon_tue_low:
         return SignalState(armed_dir="SELL")
 
     return state

@@ -25,9 +25,9 @@ from app.providers import DataProvider
 from app.service import SignalService
 from app.strategy import OHLC, SignalState, compute_levels, evaluate_day
 
-# Real 360ONE levels (the regression row): an inside day.
-#   mon_tue_high 1217.9  mon_tue_low 1164.3   H 1198  L 1170.2  X 27.8
-#   buy_t1 1211.9  sell_t1 1156.3
+# Real 360ONE levels (the regression row): an inside day. CONTINUATION model:
+# arm on a box break, ENTER at the BUY/SELL LEVEL.
+#   mon_tue_high 1217.9  mon_tue_low 1164.3   buy_level 1230.55  sell_level 1151.65
 LV = compute_levels(
     OHLC(1179.8, 1188.0, 1165.2, 1170.6),
     OHLC(1164.4, 1217.9, 1164.3, 1191.6),
@@ -37,16 +37,15 @@ LV = compute_levels(
 
 # ----------------------------- evaluate_day ------------------------------
 
-def test_day_arms_buy_on_low_below_floor():
-    # A day whose LOW pierced the Mon-Tue floor arms a BUY (no same-day fire even
-    # if the High also reached buy_t1 — order within a day is unknowable).
-    s = evaluate_day(LV, high=1212.0, low=1160.0, state=SignalState())
+def test_day_arms_buy_on_high_above_ceiling():
+    # A day whose HIGH broke above the ceiling (but not yet the buy_level) arms BUY.
+    s = evaluate_day(LV, high=1220.0, low=1200.0, state=SignalState())  # 1217.9 < 1220 < 1230.55
     assert s.status == "ARMED_BUY"
 
 
-def test_day_arms_sell_on_high_above_ceiling():
-    # High above the ceiling, low stays inside -> arm SELL.
-    s = evaluate_day(LV, high=1230.0, low=1200.0, state=SignalState())
+def test_day_arms_sell_on_low_below_floor():
+    # Low below the floor (but above sell_level), high stays inside -> arm SELL.
+    s = evaluate_day(LV, high=1200.0, low=1160.0, state=SignalState())  # 1151.65 < 1160 < 1164.3
     assert s.status == "ARMED_SELL"
 
 
@@ -55,18 +54,18 @@ def test_quiet_day_does_nothing():
     assert s.status == "NONE"
 
 
-def test_armed_buy_fires_when_day_high_reaches_t1():
+def test_armed_buy_enters_when_day_high_reaches_level():
     armed = SignalState(armed_dir="BUY")
-    fired = evaluate_day(LV, high=1212.0, low=1175.0, state=armed)  # 1212 >= buy_t1 1211.9
+    fired = evaluate_day(LV, high=1231.0, low=1200.0, state=armed)  # 1231 >= buy_level 1230.55
     assert fired.status == "BUY"
-    # Just shy of T1 -> stays armed.
-    still = evaluate_day(LV, high=1211.0, low=1175.0, state=armed)
+    # Just shy of the level -> stays armed.
+    still = evaluate_day(LV, high=1230.0, low=1200.0, state=armed)
     assert still.status == "ARMED_BUY"
 
 
-def test_armed_sell_fires_when_day_low_reaches_t1():
+def test_armed_sell_enters_when_day_low_reaches_level():
     armed = SignalState(armed_dir="SELL")
-    fired = evaluate_day(LV, high=1175.0, low=1156.0, state=armed)  # 1156 <= sell_t1 1156.3
+    fired = evaluate_day(LV, high=1200.0, low=1151.0, state=armed)  # 1151 <= sell_level 1151.65
     assert fired.status == "SELL"
 
 
@@ -121,11 +120,11 @@ TODAY = date(2026, 7, 3)
 
 
 def test_replay_backfills_arm_then_fire_across_days():
-    # AAA fakes DOWN Thursday (arm BUY), then rallies through buy_t1 Friday (fire).
+    # AAA breaks UP Thursday (arm BUY), then clears buy_level Friday (enter BUY).
     stub = _Stub(
         (date(2026, 6, 29), date(2026, 6, 30), WED),
-        {"AAA": {THU: OHLC(1170, 1175, 1160, 1168),    # low 1160 < floor -> arm BUY
-                 FRI: OHLC(1200, 1213, 1198, 1210)}},  # high 1213 >= buy_t1 -> fire BUY
+        {"AAA": {THU: OHLC(1200, 1220, 1195, 1215),    # high 1220 > ceiling -> arm BUY
+                 FRI: OHLC(1225, 1232, 1220, 1230)}},  # high 1232 >= buy_level -> enter BUY
     )
     svc = _service_with_levels(stub)
     svc.replay_days(today=TODAY)
@@ -140,8 +139,8 @@ def test_replay_backfills_arm_then_fire_across_days():
 def test_replay_is_idempotent_no_duplicate_log():
     stub = _Stub(
         (date(2026, 6, 29), date(2026, 6, 30), WED),
-        {"AAA": {THU: OHLC(1170, 1175, 1160, 1168),
-                 FRI: OHLC(1200, 1213, 1198, 1210)}},
+        {"AAA": {THU: OHLC(1200, 1220, 1195, 1215),
+                 FRI: OHLC(1225, 1232, 1220, 1230)}},
     )
     svc = _service_with_levels(stub)
     svc.replay_days(today=TODAY)
@@ -149,12 +148,12 @@ def test_replay_is_idempotent_no_duplicate_log():
     assert len(svc.build_history()) == 1  # still ONE row, not two
 
 
-def test_replay_only_arms_when_no_reversal_yet():
-    # BBB fakes down but never reverses -> stays ARMED_BUY, no history row.
+def test_replay_only_arms_when_no_confirmation_yet():
+    # BBB breaks the box but never clears buy_level -> stays ARMED_BUY, no history.
     stub = _Stub(
         (date(2026, 6, 29), date(2026, 6, 30), WED),
-        {"BBB": {THU: OHLC(1170, 1175, 1160, 1168),
-                 FRI: OHLC(1165, 1172, 1158, 1162)}},  # never reaches buy_t1
+        {"BBB": {THU: OHLC(1200, 1220, 1195, 1215),
+                 FRI: OHLC(1218, 1225, 1212, 1220)}},  # high 1225 < buy_level 1230.55
     )
     svc = _service_with_levels(stub)
     svc.replay_days(today=TODAY)
@@ -172,24 +171,24 @@ def test_replay_never_downgrades_live_state():
                  FRI: OHLC(1195, 1205, 1185, 1200)}},
     )
     svc = _service_with_levels(stub)
-    svc.repo.save_signal_state("CCC", SignalState(armed_dir="SELL"), last_ltp=1219.0)
+    svc.repo.save_signal_state("CCC", SignalState(armed_dir="SELL"), last_ltp=1158.0)
     svc.replay_days(today=TODAY)
     state, ltp = svc.repo.load_signal_state("CCC")
     assert state.status == "ARMED_SELL"   # preserved, not downgraded
-    assert ltp == 1219.0                  # live price preserved too
+    assert ltp == 1158.0                  # live price preserved too
 
 
 def _run_standalone() -> int:
     checks = [
-        ("day arms BUY on low<floor", test_day_arms_buy_on_low_below_floor),
-        ("day arms SELL on high>ceiling", test_day_arms_sell_on_high_above_ceiling),
+        ("day arms BUY on high>ceiling", test_day_arms_buy_on_high_above_ceiling),
+        ("day arms SELL on low<floor", test_day_arms_sell_on_low_below_floor),
         ("quiet day does nothing", test_quiet_day_does_nothing),
-        ("armed BUY fires at day high>=t1", test_armed_buy_fires_when_day_high_reaches_t1),
-        ("armed SELL fires at day low<=t1", test_armed_sell_fires_when_day_low_reaches_t1),
+        ("armed BUY enters at day high>=level", test_armed_buy_enters_when_day_high_reaches_level),
+        ("armed SELL enters at day low<=level", test_armed_sell_enters_when_day_low_reaches_level),
         ("fired is terminal", test_fired_is_terminal),
-        ("replay backfills arm->fire across days", test_replay_backfills_arm_then_fire_across_days),
+        ("replay backfills arm->enter across days", test_replay_backfills_arm_then_fire_across_days),
         ("replay idempotent (no dup log)", test_replay_is_idempotent_no_duplicate_log),
-        ("replay only arms when no reversal", test_replay_only_arms_when_no_reversal_yet),
+        ("replay only arms when no confirmation", test_replay_only_arms_when_no_confirmation_yet),
         ("replay never downgrades live state", test_replay_never_downgrades_live_state),
     ]
     all_ok = True

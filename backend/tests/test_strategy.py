@@ -33,6 +33,8 @@ EXPECTED = {
     "H": 1198.0,
     "L": 1170.2,
     "X": 27.8,
+    "buy_level": 1230.55,   # box high + 23.6% of the full Mon-Tue range
+    "sell_level": 1151.65,  # box low  - 23.6% of the full Mon-Tue range
     "buy_t1": 1211.9,
     "buy_t2": 1225.8,
     "buy_t3": 1253.6,

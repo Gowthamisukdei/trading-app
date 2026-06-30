@@ -19,7 +19,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.strategy import Levels, OHLC, SignalState, WeekBuffer
+from app.strategy import Levels, OHLC, SignalState, WeekBuffer, fib_levels
 
 # Where the SQLite file lives. Locally this is backend/data/signals.db. On Railway
 # we set TRADING_DB_PATH to a path on the mounted persistent VOLUME (e.g.
@@ -189,9 +189,13 @@ class Repository:
             r = conn.execute("SELECT * FROM levels WHERE symbol = ?", (symbol,)).fetchone()
         if r is None:
             return None
+        # buy_level/sell_level are derived from the stored Mon-Tue box, so we
+        # recompute them here instead of adding columns (no schema migration).
+        buy_level, sell_level = fib_levels(r["mon_tue_high"], r["mon_tue_low"])
         lv = Levels(
             mon_tue_high=r["mon_tue_high"], mon_tue_low=r["mon_tue_low"],
             wed_inside=bool(r["wed_inside"]), H=r["h"], L=r["l"], X=r["x"],
+            buy_level=buy_level, sell_level=sell_level,
             buy_t1=r["buy_t1"], buy_t2=r["buy_t2"], buy_t3=r["buy_t3"],
             sell_t1=r["sell_t1"], sell_t2=r["sell_t2"], sell_t3=r["sell_t3"],
         )
@@ -330,6 +334,15 @@ class Repository:
                 "UPDATE signal_log SET hit_t3 = 1, resolved_at = ? WHERE id = ?",
                 (resolved_at or _now_iso(), log_id),
             )
+
+    def clear_all_state(self) -> None:
+        """Wipe ALL signal_state and signal_log rows (levels/buffer/ohlc kept).
+        Used when the signal LOGIC changes — e.g. switching from the old reversal
+        engine to the continuation one — so stale state computed under the old
+        rules doesn't linger and get preserved by the replay's no-downgrade merge."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM signal_state")
+            conn.execute("DELETE FROM signal_log")
 
     def load_history(self, limit: int = 100) -> list[sqlite3.Row]:
         """Most-recent-first list of every signal ever fired, for the History page."""

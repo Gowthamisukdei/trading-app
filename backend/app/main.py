@@ -121,6 +121,14 @@ def seed_history():
     return {**summary, **service.health()}
 
 
+@app.post("/api/rebuild-state")
+def rebuild_state():
+    """One-off after an engine change: wipe stale signal state + history and rebuild
+    from daily High/Low with the current (continuation) engine."""
+    summary = service.rebuild_state()
+    return {**summary, **service.health()}
+
+
 @app.post("/api/replay-now")
 def replay_now():
     """Force the daily backfill right now: re-read each closed day's High/Low since

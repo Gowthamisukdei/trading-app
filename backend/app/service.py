@@ -128,6 +128,17 @@ class SignalService:
         # an arm/fire from a day we weren't live-scanning is recovered immediately.
         self.replay_days()
 
+    # --- one-off: wipe stale state and rebuild with the current engine ---
+    def rebuild_state(self) -> dict:
+        """Clear all signal state + history, then rebuild from the daily High/Low
+        replay using the CURRENT engine. Use once after an engine-logic change (the
+        reversal -> continuation switch) so old-model armed/fired states don't
+        survive — the replay's no-downgrade merge would otherwise keep them."""
+        self.repo.clear_all_state()
+        self.replay_days()
+        log.info("rebuild_state: cleared old state and replayed with current engine")
+        return {"rebuilt": True}
+
     # --- one-off: seed the buffer with real prior-week ranges ---
     def seed_history(self) -> dict:
         """Backfill prev1/prev2/prev3 of the rolling buffer with the REAL ranges of
@@ -299,12 +310,13 @@ class SignalService:
         self.repo.set_meta("last_scan_at", _now_iso())
 
     def _log_fired(self, symbol: str, direction: str, levels, week_id: str) -> None:
-        """Record a newly fired BUY/SELL with its target ladder. T1 is the entry."""
+        """Record a newly fired BUY/SELL. The ENTRY is the BUY/SELL LEVEL (the 23.6%
+        breakout confirmation); T1/T2/T3 are the profit targets."""
         if direction == "BUY":
-            t1, t2, t3 = levels.buy_t1, levels.buy_t2, levels.buy_t3
+            entry, t1, t2, t3 = levels.buy_level, levels.buy_t1, levels.buy_t2, levels.buy_t3
         else:  # SELL
-            t1, t2, t3 = levels.sell_t1, levels.sell_t2, levels.sell_t3
-        self.repo.append_signal_log(symbol, direction, entry=t1, t1=t1, t2=t2, t3=t3, week_id=week_id)
+            entry, t1, t2, t3 = levels.sell_level, levels.sell_t1, levels.sell_t2, levels.sell_t3
+        self.repo.append_signal_log(symbol, direction, entry=entry, t1=t1, t2=t2, t3=t3, week_id=week_id)
 
     def _resolve_open_logs(self, symbol: str, ltp: float) -> None:
         """A BUY reaches its goal when price rises to T3; a SELL when price falls

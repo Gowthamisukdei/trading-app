@@ -68,12 +68,16 @@ function CandleDots({ candles }: { candles: Candles | null }) {
 
 type Filter = "all" | "signals" | "armed";
 
-// Pick the target ladder that matters for this row's direction.
-function ladder(s: Signal): { entry: number; t2: number; t3: number } | null {
+// Pick the entry + target ladder that matters for this row's direction.
+// Entry = the BUY/SELL LEVEL (the 23.6% breakout confirmation); T1/T2/T3 are
+// the profit targets above/below it.
+function ladder(
+  s: Signal,
+): { entry: number; t1: number; t2: number; t3: number } | null {
   if (s.status === "BUY" || s.status === "ARMED_BUY")
-    return { entry: s.buyT1, t2: s.buyT2, t3: s.buyT3 };
+    return { entry: s.fibBuy, t1: s.buyT1, t2: s.buyT2, t3: s.buyT3 };
   if (s.status === "SELL" || s.status === "ARMED_SELL")
-    return { entry: s.sellT1, t2: s.sellT2, t3: s.sellT3 };
+    return { entry: s.fibSell, t1: s.sellT1, t2: s.sellT2, t3: s.sellT3 };
   return null;
 }
 
@@ -155,7 +159,7 @@ export default function Dashboard() {
             Weekly F&amp;O Reversal Signals
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Mon-Tue level broken → armed; price hits T1 → signal fires.
+            Box broken → armed; price clears the BUY/SELL LEVEL → entry. T1/T2/T3 are targets.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -241,7 +245,8 @@ export default function Dashboard() {
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 text-right font-medium">LTP</th>
               <th className="px-4 py-3 text-right font-medium">Mon-Tue range</th>
-              <th className="px-4 py-3 text-right font-medium">Entry (T1)</th>
+              <th className="px-4 py-3 text-right font-medium" title="BUY/SELL LEVEL: the 23.6% breakout confirmation">Entry</th>
+              <th className="px-4 py-3 text-right font-medium">T1</th>
               <th className="px-4 py-3 text-right font-medium">T2</th>
               <th className="px-4 py-3 text-right font-medium">T3</th>
               <th className="px-4 py-3 text-right font-medium" title="Mon-Tue range as % of price">Vol %</th>
@@ -288,6 +293,9 @@ export default function Dashboard() {
                     {fmt(s.monTueLow)} – {fmt(s.monTueHigh)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">{lad ? fmt(lad.entry) : "—"}</td>
+                  <td className={`px-4 py-3 text-right tabular-nums ${lad ? tgtCls(lad.t1) : "text-zinc-400"}`}>
+                    {lad ? fmt(lad.t1) : "—"}
+                  </td>
                   <td className={`px-4 py-3 text-right tabular-nums ${lad ? tgtCls(lad.t2) : "text-zinc-400"}`}>
                     {lad ? fmt(lad.t2) : "—"}
                   </td>
@@ -316,7 +324,7 @@ export default function Dashboard() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-4 py-10 text-center text-zinc-500">
+                <td colSpan={11} className="px-4 py-10 text-center text-zinc-500">
                   No stocks match this filter.
                 </td>
               </tr>

@@ -196,11 +196,22 @@ export default function StockPage() {
             <Stat label="Avg X (3 wk)" value={data.avgX == null ? "—" : fmt(data.avgX)} />
           </div>
 
-          {/* ladders */}
-          <h2 className="mt-7 text-sm font-medium text-zinc-400">Target ladders</h2>
+          {/* ENTRY — the BUY/SELL LEVEL (23.6% breakout confirmation) */}
+          <h2 className="mt-7 text-sm font-medium text-zinc-400">Entry — BUY / SELL LEVEL</h2>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <Stat label="BUY LEVEL (enter long)" value={fmt(data.fibBuy)} tone="text-green-400" />
+            <Stat label="SELL LEVEL (enter short)" value={fmt(data.fibSell)} tone="text-red-400" />
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            The entry trigger: price clearing 23.6% beyond the Mon-Tue box confirms the
+            breakout. A BUY enters at the BUY LEVEL, a SELL at the SELL LEVEL.
+          </p>
+
+          {/* PROFIT TARGETS — the T1/T2/T3 ladders */}
+          <h2 className="mt-7 text-sm font-medium text-zinc-400">Profit targets (after entry)</h2>
           <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-xl border border-green-500/20 bg-green-500/5 px-4 py-3">
-              <div className="text-xs font-medium text-green-400">BUY (break up above H)</div>
+              <div className="text-xs font-medium text-green-400">BUY targets (above the box)</div>
               <div className="mt-2 flex justify-between text-sm tabular-nums text-zinc-200">
                 <span>T1 {fmt(data.buyT1)}</span>
                 <span>T2 {fmt(data.buyT2)}</span>
@@ -208,7 +219,7 @@ export default function StockPage() {
               </div>
             </div>
             <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
-              <div className="text-xs font-medium text-red-400">SELL (break down below L)</div>
+              <div className="text-xs font-medium text-red-400">SELL targets (below the box)</div>
               <div className="mt-2 flex justify-between text-sm tabular-nums text-zinc-200">
                 <span>T1 {fmt(data.sellT1)}</span>
                 <span>T2 {fmt(data.sellT2)}</span>
@@ -216,19 +227,6 @@ export default function StockPage() {
               </div>
             </div>
           </div>
-
-          {/* Fibonacci alternate entry levels (the Excel's BUY/SELL LEVEL cols) */}
-          <h2 className="mt-7 text-sm font-medium text-zinc-400">
-            Fib breakout levels (23.6% beyond the Mon-Tue box)
-          </h2>
-          <div className="mt-2 grid grid-cols-2 gap-3">
-            <Stat label="Fib BUY level" value={fmt(data.fibBuy)} tone="text-green-400" />
-            <Stat label="Fib SELL level" value={fmt(data.fibSell)} tone="text-red-400" />
-          </div>
-          <p className="mt-2 text-xs text-zinc-500">
-            A second, shallower breakout trigger from the original Excel: 23.6% of the full
-            Mon-Tue range projected above the high / below the low.
-          </p>
         </>
       )}
 

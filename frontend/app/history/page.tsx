@@ -104,7 +104,8 @@ export default function History() {
               <th className="px-4 py-3 font-medium">Symbol</th>
               <th className="px-4 py-3 font-medium">Signal</th>
               <th className="px-4 py-3 font-medium">Fired</th>
-              <th className="px-4 py-3 text-right font-medium">Entry (T1)</th>
+              <th className="px-4 py-3 text-right font-medium" title="BUY/SELL LEVEL">Entry</th>
+              <th className="px-4 py-3 text-right font-medium">T1</th>
               <th className="px-4 py-3 text-right font-medium">T2</th>
               <th className="px-4 py-3 text-right font-medium">T3</th>
               <th className="px-4 py-3 font-medium">Week</th>
@@ -128,6 +129,7 @@ export default function History() {
                 </td>
                 <td className="px-4 py-3 text-zinc-400">{when(r.firedAt)}</td>
                 <td className="px-4 py-3 text-right tabular-nums">{fmt(r.entry)}</td>
+                <td className="px-4 py-3 text-right tabular-nums text-zinc-400">{fmt(r.t1)}</td>
                 <td className="px-4 py-3 text-right tabular-nums text-zinc-400">{fmt(r.t2)}</td>
                 <td className="px-4 py-3 text-right tabular-nums text-zinc-400">{fmt(r.t3)}</td>
                 <td className="px-4 py-3 text-zinc-400">{r.weekId}</td>
@@ -146,7 +148,7 @@ export default function History() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-zinc-500">
+                <td colSpan={9} className="px-4 py-10 text-center text-zinc-500">
                   No signals have fired yet. When one does, it shows up here.
                 </td>
               </tr>

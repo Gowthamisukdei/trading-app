@@ -40,9 +40,10 @@ def test_fired_signal_is_logged_once():
     assert len(buys) == 1, f"expected one logged BUY, got {len(buys)}"
     row = buys[0]
     assert row["signal"] == "BUY"
+    assert row["entry"] == 1230.55      # entry = the BUY LEVEL (23.6% breakout)
+    assert row["t1"] == 1211.9          # T1 is the first target, not the entry
     assert row["t3"] == 1253.6          # the Excel-verified BUY T3
-    assert row["entry"] == row["t1"]    # entry is T1
-    assert row["hitT3"] is False        # 1212 never reached 1253.6
+    assert row["hitT3"] is False        # 1231 never reached 1253.6
     assert row["resolvedAt"] is None
 
     # Scanning again must NOT duplicate the log (already fired, not a new fire).

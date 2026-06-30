@@ -26,20 +26,20 @@ from app.strategy import (
     STATUS_SELL,
 )
 
-# Reuse the 360ONE levels so the trigger prices are real, sheet-verified numbers.
+# Reuse the 360ONE levels so the prices are real, sheet-verified numbers.
+# CONTINUATION model: arm on a box break, ENTER at the BUY/SELL LEVEL.
 #   mon_tue_low = 1164.3   mon_tue_high = 1217.9
-#   buy_t1 = 1211.9        sell_t1 = 1156.3
+#   buy_level = 1230.55    sell_level = 1151.65   (T1/T2/T3 are now just targets)
 LEVELS = compute_levels(
     OHLC(1179.8, 1188.0, 1165.2, 1170.6),
     OHLC(1164.4, 1217.9, 1164.3, 1191.6),
     OHLC(1198.0, 1198.0, 1170.2, 1190.0),
 )
 
-# A NON-inside-day stock. Here Wednesday breaks out, so H = mon_tue_high and the
-# BUY trigger sits ABOVE the ceiling — which leaves a price band where you can
-# poke the ceiling WITHOUT firing. We need this to test the "no flip" rule.
+# A NON-inside-day stock — gives a band between the ceiling and the buy_level where
+# price has broken the box but NOT yet confirmed, to test arm-without-entry + no-flip.
 #   mon_tue_high = 112   mon_tue_low = 90   X = 22
-#   buy_t1 = 123 (above the ceiling 112)    sell_t1 = 79
+#   buy_level = 117.19   sell_level = 84.81   (buy_t1 = 123 is a TARGET)
 NON_INSIDE = compute_levels(
     OHLC(100.0, 110.0, 90.0, 105.0),
     OHLC(104.0, 112.0, 95.0, 108.0),
@@ -56,47 +56,53 @@ CASES = [
         STATUS_NONE,
     ),
     (
-        "price fakes DOWN below floor -> ARMED_BUY",
+        "price breaks UP above the ceiling -> ARMED_BUY",
         LEVELS,
-        [1190.0, 1160.0],  # 1160 < 1164.3
+        [1190.0, 1220.0],  # 1217.9 < 1220 < 1230.55 (broke box, not yet confirmed)
         STATUS_ARMED_BUY,
     ),
     (
-        "price fakes UP above ceiling -> ARMED_SELL",
+        "price breaks DOWN below the floor -> ARMED_SELL",
         LEVELS,
-        [1190.0, 1225.0],  # 1225 > 1217.9
+        [1190.0, 1160.0],  # 1151.65 < 1160 < 1164.3
         STATUS_ARMED_SELL,
     ),
     (
-        "armed BUY then breaks up through buy_t1 -> BUY fires",
+        "armed BUY then clears buy_level -> BUY enters",
         LEVELS,
-        [1160.0, 1190.0, 1212.0],  # arm down, recover, then >= 1211.9
+        [1220.0, 1231.0],  # arm up, then >= 1230.55
         STATUS_BUY,
     ),
     (
-        "armed SELL then breaks down through sell_t1 -> SELL fires",
+        "armed SELL then clears sell_level -> SELL enters",
         LEVELS,
-        [1225.0, 1190.0, 1150.0],  # arm up, recover, then <= 1156.3
+        [1160.0, 1150.0],  # arm down, then <= 1151.65
         STATUS_SELL,
     ),
     (
-        "armed BUY but never reaches buy_t1 -> stays ARMED_BUY",
+        "price gaps straight through buy_level -> BUY enters directly",
         LEVELS,
-        [1160.0, 1190.0, 1205.0],  # 1205 < 1211.9
-        STATUS_ARMED_BUY,
-    ),
-    (
-        "once BUY fires it latches even if price falls back",
-        LEVELS,
-        [1160.0, 1212.0, 1100.0],  # fire BUY, then dump
+        [1231.0],  # 1231 >= 1230.55, no prior arm needed
         STATUS_BUY,
     ),
     (
-        # Non-inside stock: buy_t1=123 sits above ceiling=112, so price can poke
-        # the ceiling (113) without triggering. Armed BUY must NOT flip to SELL.
-        "armed BUY does NOT flip to SELL when price pokes the ceiling",
+        "armed BUY but never reaches buy_level -> stays ARMED_BUY",
+        LEVELS,
+        [1220.0, 1225.0],  # 1225 < 1230.55
+        STATUS_ARMED_BUY,
+    ),
+    (
+        "once BUY enters it latches even if price falls back",
+        LEVELS,
+        [1231.0, 1100.0],  # enter BUY, then dump
+        STATUS_BUY,
+    ),
+    (
+        # buy_level=117.19; price pokes ceiling (113) then dips below floor — armed
+        # BUY must NOT flip to SELL (the setup stays valid until next Wed).
+        "armed BUY does NOT flip to SELL when price pokes the other way",
         NON_INSIDE,
-        [85.0, 113.0],  # 85<90 arms BUY; 113>112 ceiling but <123 buy_t1
+        [113.0, 88.0],  # 113>112 arms BUY; 88<90 floor but still > sell_level
         STATUS_ARMED_BUY,
     ),
 ]
