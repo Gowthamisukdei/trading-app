@@ -19,7 +19,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.strategy import Levels, OHLC, SignalState, WeekBuffer, fib_levels
+from app.strategy import Levels, OHLC, ReverseState, SignalState, WeekBuffer, fib_levels
 
 # Where the SQLite file lives. Locally this is backend/data/signals.db. On Railway
 # we set TRADING_DB_PATH to a path on the mounted persistent VOLUME (e.g.
@@ -153,6 +153,53 @@ class Repository:
         if row is None:
             return SignalState(), None
         return SignalState(armed_dir=row["armed_dir"], fired_dir=row["fired_dir"]), row["last_ltp"]
+
+    # ---------------- reverse-breakout state (the LIVE play) ----------------
+    # The live app runs the REVERSE breakout. ReverseState carries faked_dir
+    # ("UP"/"DOWN" — which side's T1 the fake tagged) + fired_dir ("BUY"/"SELL").
+    # We reuse the signal_state table: the `armed_dir` column stores faked_dir, so
+    # no migration is needed and the armed_at/fired_at timestamp logic is shared.
+
+    def save_reverse_state(self, symbol: str, state: ReverseState, last_ltp: float | None = None) -> None:
+        now = _now_iso()
+        with self._connect() as conn:
+            prev = conn.execute(
+                "SELECT armed_dir, armed_at, fired_dir, fired_at FROM signal_state WHERE symbol = ?",
+                (symbol,),
+            ).fetchone()
+
+            armed_at = prev["armed_at"] if prev else None
+            fired_at = prev["fired_at"] if prev else None
+            if state.faked_dir and not (prev and prev["armed_dir"]):
+                armed_at = now
+            if not state.faked_dir:
+                armed_at = None
+            if state.fired_dir and not (prev and prev["fired_dir"]):
+                fired_at = now
+            if not state.fired_dir:
+                fired_at = None
+
+            conn.execute(
+                """
+                INSERT INTO signal_state (symbol, armed_dir, armed_at, fired_dir, fired_at, last_ltp, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    armed_dir=excluded.armed_dir, armed_at=excluded.armed_at,
+                    fired_dir=excluded.fired_dir, fired_at=excluded.fired_at,
+                    last_ltp=excluded.last_ltp,   updated_at=excluded.updated_at
+                """,
+                (symbol, state.faked_dir, armed_at, state.fired_dir, fired_at, last_ltp, now),
+            )
+
+    def load_reverse_state(self, symbol: str) -> tuple[ReverseState, float | None]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT armed_dir, fired_dir, last_ltp FROM signal_state WHERE symbol = ?",
+                (symbol,),
+            ).fetchone()
+        if row is None:
+            return ReverseState(), None
+        return ReverseState(faked_dir=row["armed_dir"], fired_dir=row["fired_dir"]), row["last_ltp"]
 
     # ---------------- weekly levels ----------------
 

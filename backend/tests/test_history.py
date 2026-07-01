@@ -40,10 +40,11 @@ def test_fired_signal_is_logged_once():
     assert len(buys) == 1, f"expected one logged BUY, got {len(buys)}"
     row = buys[0]
     assert row["signal"] == "BUY"
-    assert row["entry"] == 1230.55      # entry = the BUY LEVEL (23.6% breakout)
-    assert row["t1"] == 1244.7          # T1 = box high + 50% (a target above entry)
-    assert row["t3"] == 1325.1          # box high + 2x span
-    assert row["hitT3"] is False        # 1231 never reached 1325.1
+    # REVERSE BUY: entry = box high H; compressed targets H+X/2, H+X, H+2X (X=27.8).
+    assert row["entry"] == 1198.0       # entry = box high H (the reversal exit edge)
+    assert row["t1"] == 1211.9          # H + X/2
+    assert row["t3"] == 1253.6          # H + 2X
+    assert row["hitT3"] is False        # 1199 never reached 1253.6
     assert row["resolvedAt"] is None
 
     # Scanning again must NOT duplicate the log (already fired, not a new fire).

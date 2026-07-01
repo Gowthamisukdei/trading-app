@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.db import Repository
 from app.providers import DataProvider
 from app.service import SignalService
-from app.strategy import OHLC, SignalState, compute_levels, evaluate_day
+from app.strategy import OHLC, ReverseState, SignalState, compute_levels, evaluate_day
 
 # Real 360ONE levels (the regression row): an inside day. CONTINUATION model:
 # arm on a box break, ENTER at the BUY/SELL LEVEL.
@@ -119,17 +119,18 @@ FRI = date(2026, 7, 3)
 TODAY = date(2026, 7, 3)
 
 
-def test_replay_backfills_arm_then_fire_across_days():
-    # AAA breaks UP Thursday (arm BUY), then clears buy_level Friday (enter BUY).
+def test_replay_backfills_trap_then_reverse_across_days():
+    # REVERSE: AAA fakes DOWN to sell_t1 Thursday (trap), then snaps back UP to the
+    # box high H Friday -> enter BUY.  sell_t1 = L - X/2 = 1156.3, H = 1198.0.
     stub = _Stub(
         (date(2026, 6, 29), date(2026, 6, 30), WED),
-        {"AAA": {THU: OHLC(1200, 1220, 1195, 1215),    # high 1220 > ceiling -> arm BUY
-                 FRI: OHLC(1225, 1232, 1220, 1230)}},  # high 1232 >= buy_level -> enter BUY
+        {"AAA": {THU: OHLC(1180, 1185, 1150, 1160),    # low 1150 <= sell_t1 -> trap DOWN
+                 FRI: OHLC(1190, 1205, 1188, 1200)}},  # high 1205 >= H 1198 -> reverse BUY
     )
     svc = _service_with_levels(stub)
     svc.replay_days(today=TODAY)
 
-    state, _ = svc.repo.load_signal_state("AAA")
+    state, _ = svc.repo.load_reverse_state("AAA")
     assert state.status == "BUY", state.status
     # And it must be written to the permanent track record exactly once.
     hist = svc.build_history()
@@ -139,8 +140,8 @@ def test_replay_backfills_arm_then_fire_across_days():
 def test_replay_is_idempotent_no_duplicate_log():
     stub = _Stub(
         (date(2026, 6, 29), date(2026, 6, 30), WED),
-        {"AAA": {THU: OHLC(1200, 1220, 1195, 1215),
-                 FRI: OHLC(1225, 1232, 1220, 1230)}},
+        {"AAA": {THU: OHLC(1180, 1185, 1150, 1160),
+                 FRI: OHLC(1190, 1205, 1188, 1200)}},
     )
     svc = _service_with_levels(stub)
     svc.replay_days(today=TODAY)
@@ -148,34 +149,34 @@ def test_replay_is_idempotent_no_duplicate_log():
     assert len(svc.build_history()) == 1  # still ONE row, not two
 
 
-def test_replay_only_arms_when_no_confirmation_yet():
-    # BBB breaks the box but never clears buy_level -> stays ARMED_BUY, no history.
+def test_replay_only_traps_when_no_reverse_yet():
+    # BBB fakes DOWN (trap) but never snaps back to H -> stays FAKED_DOWN, no history.
     stub = _Stub(
         (date(2026, 6, 29), date(2026, 6, 30), WED),
-        {"BBB": {THU: OHLC(1200, 1220, 1195, 1215),
-                 FRI: OHLC(1218, 1225, 1212, 1220)}},  # high 1225 < buy_level 1230.55
+        {"BBB": {THU: OHLC(1180, 1185, 1150, 1160),    # low 1150 <= sell_t1 -> trap DOWN
+                 FRI: OHLC(1180, 1190, 1175, 1185)}},  # high 1190 < H 1198 -> no reverse
     )
     svc = _service_with_levels(stub)
     svc.replay_days(today=TODAY)
-    state, _ = svc.repo.load_signal_state("BBB")
-    assert state.status == "ARMED_BUY"
+    state, _ = svc.repo.load_reverse_state("BBB")
+    assert state.status == "FAKED_DOWN"
     assert svc.build_history() == []
 
 
 def test_replay_never_downgrades_live_state():
-    # The live scan already armed CCC today; replay sees no crossing in the closed
+    # The live scan already trapped CCC today; replay sees no trap in the closed
     # days -> it must NOT reset CCC back to NONE.
     stub = _Stub(
         (date(2026, 6, 29), date(2026, 6, 30), WED),
-        {"CCC": {THU: OHLC(1200, 1205, 1180, 1190),    # quiet, inside range
+        {"CCC": {THU: OHLC(1200, 1205, 1180, 1190),    # quiet, inside range (no trap)
                  FRI: OHLC(1195, 1205, 1185, 1200)}},
     )
     svc = _service_with_levels(stub)
-    svc.repo.save_signal_state("CCC", SignalState(armed_dir="SELL"), last_ltp=1158.0)
+    svc.repo.save_reverse_state("CCC", ReverseState(faked_dir="UP"), last_ltp=1213.0)
     svc.replay_days(today=TODAY)
-    state, ltp = svc.repo.load_signal_state("CCC")
-    assert state.status == "ARMED_SELL"   # preserved, not downgraded
-    assert ltp == 1158.0                  # live price preserved too
+    state, ltp = svc.repo.load_reverse_state("CCC")
+    assert state.status == "FAKED_UP"     # preserved, not downgraded
+    assert ltp == 1213.0                  # live price preserved too
 
 
 def _run_standalone() -> int:
@@ -186,9 +187,9 @@ def _run_standalone() -> int:
         ("armed BUY enters at day high>=level", test_armed_buy_enters_when_day_high_reaches_level),
         ("armed SELL enters at day low<=level", test_armed_sell_enters_when_day_low_reaches_level),
         ("fired is terminal", test_fired_is_terminal),
-        ("replay backfills arm->enter across days", test_replay_backfills_arm_then_fire_across_days),
+        ("replay backfills trap->reverse across days", test_replay_backfills_trap_then_reverse_across_days),
         ("replay idempotent (no dup log)", test_replay_is_idempotent_no_duplicate_log),
-        ("replay only arms when no confirmation", test_replay_only_arms_when_no_confirmation_yet),
+        ("replay only traps when no reverse", test_replay_only_traps_when_no_reverse_yet),
         ("replay never downgrades live state", test_replay_never_downgrades_live_state),
     ]
     all_ok = True

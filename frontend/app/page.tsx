@@ -3,7 +3,7 @@
 // The dashboard. A client component because it polls the backend on a timer and
 // holds live state. It does three things:
 //   1. fetch /api/signals + /api/health every few seconds
-//   2. let the trader filter (all / signals / armed / search)
+//   2. let the trader filter (all / signals / trapped / good-invest / search)
 //   3. render one colour-coded row per stock
 // All backend talk goes through lib/api.ts.
 
@@ -26,8 +26,9 @@ const REFRESH_MS = 5000;
 const STATUS_STYLE: Record<Status, { label: string; cls: string }> = {
   BUY: { label: "BUY", cls: "bg-green-500/15 text-green-400 ring-green-500/30" },
   SELL: { label: "SELL", cls: "bg-red-500/15 text-red-400 ring-red-500/30" },
-  ARMED_BUY: { label: "Waiting for BUY", cls: "bg-amber-500/15 text-amber-400 ring-amber-500/30" },
-  ARMED_SELL: { label: "Waiting for SELL", cls: "bg-amber-500/15 text-amber-400 ring-amber-500/30" },
+  // Reverse "trap" phase: faked one way, waiting for the snap-back to fire.
+  FAKED_DOWN: { label: "Trapped ↓ · watch BUY", cls: "bg-amber-500/15 text-amber-400 ring-amber-500/30" },
+  FAKED_UP: { label: "Trapped ↑ · watch SELL", cls: "bg-amber-500/15 text-amber-400 ring-amber-500/30" },
   NONE: { label: "—", cls: "bg-zinc-700/30 text-zinc-400 ring-zinc-600/30" },
 };
 
@@ -66,18 +67,18 @@ function CandleDots({ candles }: { candles: Candles | null }) {
   );
 }
 
-type Filter = "all" | "signals" | "armed";
+type Filter = "all" | "signals" | "trapped" | "good";
 
-// Pick the entry + target ladder that matters for this row's direction.
-// Entry = the BUY/SELL LEVEL (the 23.6% breakout confirmation); T1/T2/T3 are
-// the profit targets above/below it.
+// Pick the entry + target ladder for this row's direction. REVERSE play: a
+// FAKED_DOWN trap reverses UP into a BUY (entry = box high); a FAKED_UP trap
+// reverses DOWN into a SELL (entry = box low). Entry = the opposite box edge.
 function ladder(
   s: Signal,
 ): { entry: number; t1: number; t2: number; t3: number } | null {
-  if (s.status === "BUY" || s.status === "ARMED_BUY")
-    return { entry: s.fibBuy, t1: s.buyT1, t2: s.buyT2, t3: s.buyT3 };
-  if (s.status === "SELL" || s.status === "ARMED_SELL")
-    return { entry: s.fibSell, t1: s.sellT1, t2: s.sellT2, t3: s.sellT3 };
+  if (s.status === "BUY" || s.status === "FAKED_DOWN")
+    return { entry: s.buyEntry, t1: s.buyT1, t2: s.buyT2, t3: s.buyT3 };
+  if (s.status === "SELL" || s.status === "FAKED_UP")
+    return { entry: s.sellEntry, t1: s.sellT1, t2: s.sellT2, t3: s.sellT3 };
   return null;
 }
 
@@ -136,7 +137,8 @@ export default function Dashboard() {
     return signals
       .filter((s) => {
         if (filter === "signals") return s.status === "BUY" || s.status === "SELL";
-        if (filter === "armed") return s.status === "ARMED_BUY" || s.status === "ARMED_SELL";
+        if (filter === "trapped") return s.status === "FAKED_UP" || s.status === "FAKED_DOWN";
+        if (filter === "good") return s.goodInvest;
         return true;
       })
       .filter((s) => s.symbol.toLowerCase().includes(query.toLowerCase()));
@@ -144,10 +146,11 @@ export default function Dashboard() {
 
   const counts = useMemo(() => {
     const live = signals.filter((s) => s.status === "BUY" || s.status === "SELL").length;
-    const armed = signals.filter(
-      (s) => s.status === "ARMED_BUY" || s.status === "ARMED_SELL"
+    const trapped = signals.filter(
+      (s) => s.status === "FAKED_UP" || s.status === "FAKED_DOWN"
     ).length;
-    return { live, armed };
+    const good = signals.filter((s) => s.goodInvest).length;
+    return { live, trapped, good };
   }, [signals]);
 
   return (
@@ -159,7 +162,7 @@ export default function Dashboard() {
             Weekly F&amp;O Reversal Signals
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Box broken → armed; price clears the BUY/SELL LEVEL → entry. T1/T2/T3 are targets.
+            Reverse breakout: fake to T1 (trapped) → snap back through the box → BUY/SELL. Best on Good-invest weeks.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -202,8 +205,9 @@ export default function Dashboard() {
           Week: <span className="text-zinc-200">{signals[0]?.weekId ?? "—"}</span>
         </span>
         <span className="ml-auto text-zinc-400">
-          <span className="text-green-400">{counts.live}</span> live ·{" "}
-          <span className="text-amber-400">{counts.armed}</span> armed
+          <span className="text-green-400">{counts.live}</span> signals ·{" "}
+          <span className="text-amber-400">{counts.trapped}</span> trapped ·{" "}
+          <span className="text-sky-400">{counts.good}</span> good-invest
         </span>
       </div>
 
@@ -215,7 +219,7 @@ export default function Dashboard() {
 
       {/* Controls */}
       <div className="mt-5 flex flex-wrap items-center gap-2">
-        {(["all", "signals", "armed"] as Filter[]).map((f) => (
+        {(["all", "signals", "trapped", "good"] as Filter[]).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -225,7 +229,7 @@ export default function Dashboard() {
                 : "bg-zinc-900 text-zinc-300 ring-zinc-700 hover:bg-zinc-800"
             }`}
           >
-            {f === "all" ? "All" : f}
+            {f === "all" ? "All" : f === "good" ? "Good invest" : f}
           </button>
         ))}
         <input
@@ -261,9 +265,9 @@ export default function Dashboard() {
               // A target is "hit" once the live price reaches it: a BUY ladder
               // climbs (ltp >= target), a SELL ladder falls (ltp <= target).
               const dir =
-                s.status === "BUY" || s.status === "ARMED_BUY"
+                s.status === "BUY" || s.status === "FAKED_DOWN"
                   ? "buy"
-                  : s.status === "SELL" || s.status === "ARMED_SELL"
+                  : s.status === "SELL" || s.status === "FAKED_UP"
                   ? "sell"
                   : null;
               const hit = (target: number) =>

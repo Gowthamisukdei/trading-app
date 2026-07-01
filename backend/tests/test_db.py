@@ -72,12 +72,12 @@ def test_forced_recompute_same_week_keeps_state_and_buffer():
     svc.run_weekly()              # week computed, buffer rolled once
     svc.scan(); svc.scan(); svc.scan()  # drive 360ONE to BUY
     before_buf = repo.load_buffer("360ONE")
-    before_state, _ = repo.load_signal_state("360ONE")
+    before_state, _ = repo.load_reverse_state("360ONE")
     assert before_state.status == "BUY"
 
     svc.run_weekly(force=True)    # same week, forced
     after_buf = repo.load_buffer("360ONE")
-    after_state, _ = repo.load_signal_state("360ONE")
+    after_state, _ = repo.load_reverse_state("360ONE")
 
     # Buffer not re-rolled: current stays, prev slots unchanged.
     assert (after_buf.current, after_buf.prev1, after_buf.prev2, after_buf.prev3) == (

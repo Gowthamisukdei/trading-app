@@ -151,6 +151,10 @@ STATUS_ARMED_SELL = "ARMED_SELL"
 STATUS_BUY = "BUY"
 STATUS_SELL = "SELL"
 
+# Play 2 (reverse breakout) statuses — the trap phase before the reverse entry.
+STATUS_FAKED_DOWN = "FAKED_DOWN"   # first move tagged sell_t1 — watch reverse UP -> BUY
+STATUS_FAKED_UP = "FAKED_UP"       # first move tagged buy_t1 — watch reverse DOWN -> SELL
+
 
 @dataclass(frozen=True)
 class SignalState:
@@ -272,6 +276,122 @@ def evaluate_day(levels: Levels, high: float, low: float, state: SignalState) ->
         return SignalState(armed_dir="SELL")
 
     return state
+
+
+# ---------------------------------------------------------------------------
+# PLAY 2 — the REVERSE breakout (the founder's signature — the WHOLE Excel)
+# ---------------------------------------------------------------------------
+#
+# This is the play the founder actually taught (his student built weeklyalgo.xlsx
+# from it). It is NOT the continuation play above — it's a failed-breakout reversal:
+#
+#   1. TRAP  — the first move runs all the way to T1 on one side, sucking in
+#              breakout traders. A HIGH reaching buy_t1 is an UP trap; a LOW
+#              reaching sell_t1 is a DOWN trap.
+#   2. REVERSE + ENTER — the move fails and snaps back through the whole box; we
+#              enter as it exits the OPPOSITE box edge:
+#                UP trap   -> price falls back to the box LOW (L)  -> ENTER SELL
+#                DOWN trap -> price rises back to the box HIGH (H) -> ENTER BUY
+#   3. TARGET — the opposite side's T1/T2/T3 ladder.
+#
+# The trap must come FIRST and the entry AFTER — that ordering is the edge. We drive
+# it off a day's High/Low (bhavcopy) and carry a tiny state (which trap has sprung).
+#
+# LEVELS NOTE: we use the TIGHTENED box the Excel shows — levels.H / levels.L and
+# the tightened first target T1 = H +/- X/2 (on an inside day H/L/X are Wednesday's
+# tighter range; otherwise they equal the Mon-Tue box). We deliberately do NOT use
+# the full-box mon_tue_high / buy_t1 fields the continuation engine uses, so these
+# numbers match weeklyalgo.xlsx exactly (360ONE: H 1198, L 1170.2, buy_t1 1211.9).
+
+
+@dataclass(frozen=True)
+class ReverseState:
+    """A stock's position in the REVERSE-breakout state machine. Persist in the DB.
+      faked_dir : "UP" | "DOWN" | None  — which side's T1 the fake move tagged (trap)
+      fired_dir : "BUY" | "SELL" | None — which reverse entry has fired, if any
+    An UP trap (faked up to buy_t1) reverses into a SELL; a DOWN trap (faked down to
+    sell_t1) reverses into a BUY. Once fired, the stock is done for the week.
+    """
+    faked_dir: str | None = None
+    fired_dir: str | None = None
+
+    @property
+    def status(self) -> str:
+        if self.fired_dir == "BUY":
+            return STATUS_BUY
+        if self.fired_dir == "SELL":
+            return STATUS_SELL
+        if self.faked_dir == "DOWN":
+            return STATUS_FAKED_DOWN
+        if self.faked_dir == "UP":
+            return STATUS_FAKED_UP
+        return STATUS_NONE
+
+
+def evaluate_day_reverse(levels: Levels, high: float, low: float,
+                         state: ReverseState) -> ReverseState:
+    """Advance the REVERSE-breakout state machine by one day's High/Low.
+
+    Phase 1 — spring the trap: the first move must reach T1 on one side. A day whose
+    HIGH tags buy_t1 sets an UP trap (a SELL is coming); a LOW tagging sell_t1 sets a
+    DOWN trap (a BUY is coming).
+
+    Phase 2 — take the reverse at the OPPOSITE box edge: once trapped UP, a LATER day
+    whose LOW falls back to the box low (L) enters SELL; once trapped DOWN, a LATER
+    day whose HIGH rises to the box high (H) enters BUY.
+
+    Uses the Excel's tightened box (H, L) and its tightened first target
+    (T1 = H +/- X/2). The trap must precede the entry, so we never fire on the same
+    call that sets the trap; a wild outside day that tags both T1s just sets the UP
+    trap and waits (conservative — we never invent a same-day reverse from daily data).
+    """
+    # The Excel's tightened first targets — the "T1" the fake move must tag.
+    buy_t1 = levels.H + levels.X / 2      # up-side first target
+    sell_t1 = levels.L - levels.X / 2     # down-side first target
+
+    # Terminal for the week once the reverse has fired.
+    if state.fired_dir is not None:
+        return state
+
+    # Phase 2 — trapped already: watch for the snap-back through the OPPOSITE box edge.
+    if state.faked_dir == "UP":            # faked up to buy_t1 -> reversal is a SELL
+        if low <= levels.L:
+            return ReverseState(faked_dir="UP", fired_dir="SELL")
+        return state
+    if state.faked_dir == "DOWN":          # faked down to sell_t1 -> reversal is a BUY
+        if high >= levels.H:
+            return ReverseState(faked_dir="DOWN", fired_dir="BUY")
+        return state
+
+    # Phase 1 — no trap yet: the first move must reach T1 to spring it.
+    if high >= buy_t1:
+        return ReverseState(faked_dir="UP")
+    if low <= sell_t1:
+        return ReverseState(faked_dir="DOWN")
+    return state
+
+
+def evaluate_signal_reverse(levels: Levels, ltp: float, state: ReverseState) -> ReverseState:
+    """Live-tick version of evaluate_day_reverse: advance the REVERSE-breakout state
+    machine using ONE live price instead of a day's High/Low. Same two phases —
+    a price that reaches T1 on one side springs the trap; once trapped, a price that
+    snaps back to the OPPOSITE box edge fires the reverse entry. The daily High/Low
+    replay stays the authoritative record; this just gives an intraday preview."""
+    return evaluate_day_reverse(levels, high=ltp, low=ltp, state=state)
+
+
+def reverse_targets(levels: Levels, direction: str) -> tuple[float, float, float, float]:
+    """The reverse trade's (entry, T1, T2, T3) using the Excel's TIGHTENED box
+    (H/L/X — Wednesday's tighter range on an inside day). The entry is the OPPOSITE
+    box edge the reversal exits through; the targets ladder out from there:
+      BUY  (a DOWN trap that reverses up): enter at H, targets H+X/2, H+X, H+2X
+      SELL (an UP trap that reverses down): enter at L, targets L-X/2, L-X, L-2X
+    These are the compressed inside-day levels the founder's play actually uses —
+    NOT the full-box buy_t1/… fields (those belong to the retired continuation play)."""
+    H, L, X = levels.H, levels.L, levels.X
+    if direction == "BUY":
+        return (round(H, _DP), round(H + X / 2, _DP), round(H + X, _DP), round(H + 2 * X, _DP))
+    return (round(L, _DP), round(L - X / 2, _DP), round(L - X, _DP), round(L - 2 * X, _DP))
 
 
 # ---------------------------------------------------------------------------

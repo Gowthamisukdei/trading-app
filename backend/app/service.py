@@ -9,8 +9,11 @@ Responsibilities:
   3. On request: read saved state + levels and shape it for the dashboard.
 
 State now lives in the DATABASE (via Repository), not memory — so everything
-survives a backend restart. Note how the engine import (compute_levels /
-evaluate_signal) is unchanged from before: only the storage swapped.
+survives a backend restart.
+
+LIVE PLAY = the REVERSE breakout (the founder's play): a fake to T1 on one side,
+then a snap-back that enters at the OPPOSITE box edge. The old continuation engine
+(evaluate_signal / evaluate_day) is retired and no longer wired in here.
 """
 
 import logging
@@ -22,14 +25,14 @@ from app.market_calendar import IST, is_trading_day
 from app.providers import DataProvider, FakeProvider
 from app.strategy import (
     OHLC,
-    SignalState,
+    ReverseState,
     WeekBuffer,
     candle_quality,
     compute_levels,
-    evaluate_day,
-    evaluate_signal,
-    fib_levels,
+    evaluate_day_reverse,
+    evaluate_signal_reverse,
     invest_tier,
+    reverse_targets,
     volatility_pct,
 )
 
@@ -108,7 +111,7 @@ class SignalService:
 
                 if is_new_week:
                     buffer = self.repo.roll_buffer(symbol, levels.X)  # roll ONCE/week
-                    self.repo.save_signal_state(symbol, SignalState())  # clear state
+                    self.repo.save_reverse_state(symbol, ReverseState())  # clear state
                 else:
                     cur = self.repo.load_buffer(symbol)
                     buffer = WeekBuffer(
@@ -234,7 +237,7 @@ class SignalService:
                 continue
             levels, week_id = loaded[0], loaded[1]
 
-            rebuilt = SignalState()
+            rebuilt = ReverseState()
             saw_day = False
             for d in days:
                 try:
@@ -242,15 +245,15 @@ class SignalService:
                 except Exception:  # noqa: BLE001 - symbol missing from that day's file
                     continue
                 saw_day = True
-                rebuilt = evaluate_day(levels, ohlc.high, ohlc.low, rebuilt)
+                rebuilt = evaluate_day_reverse(levels, ohlc.high, ohlc.low, rebuilt)
             if not saw_day:
                 continue
 
-            prev, prev_ltp = self.repo.load_signal_state(symbol)
+            prev, prev_ltp = self.repo.load_reverse_state(symbol)
             # Never move backwards: keep whichever state is further along (FIRED >
-            # ARMED > NONE), so a live intraday arm/fire from today survives.
+            # TRAPPED > NONE), so a live intraday trap/fire from today survives.
             merged = rebuilt if _rank(rebuilt) >= _rank(prev) else prev
-            self.repo.save_signal_state(symbol, merged, last_ltp=prev_ltp)
+            self.repo.save_reverse_state(symbol, merged, last_ltp=prev_ltp)
             rebuilt_n += 1
             if merged.fired_dir and not prev.fired_dir:
                 self._log_fired(symbol, merged.fired_dir, levels, week_id)
@@ -295,9 +298,9 @@ class SignalService:
             except Exception as e:  # noqa: BLE001
                 log.warning("scan: no price for %s (%s); skipping this tick", symbol, e)
                 continue
-            state, _ = self.repo.load_signal_state(symbol)
-            new_state = evaluate_signal(levels, ltp, state)
-            self.repo.save_signal_state(symbol, new_state, last_ltp=ltp)
+            state, _ = self.repo.load_reverse_state(symbol)
+            new_state = evaluate_signal_reverse(levels, ltp, state)
+            self.repo.save_reverse_state(symbol, new_state, last_ltp=ltp)
 
             # If the stock just FIRED this tick (wasn't fired before, is now),
             # write it into the permanent track record.
@@ -310,12 +313,10 @@ class SignalService:
         self.repo.set_meta("last_scan_at", _now_iso())
 
     def _log_fired(self, symbol: str, direction: str, levels, week_id: str) -> None:
-        """Record a newly fired BUY/SELL. The ENTRY is the BUY/SELL LEVEL (the 23.6%
-        breakout confirmation); T1/T2/T3 are the profit targets."""
-        if direction == "BUY":
-            entry, t1, t2, t3 = levels.buy_level, levels.buy_t1, levels.buy_t2, levels.buy_t3
-        else:  # SELL
-            entry, t1, t2, t3 = levels.sell_level, levels.sell_t1, levels.sell_t2, levels.sell_t3
+        """Record a newly fired REVERSE BUY/SELL. The ENTRY is the OPPOSITE box edge
+        the reversal exits through (H for a BUY, L for a SELL); T1/T2/T3 are the
+        compressed inside-day profit targets that ladder out from there."""
+        entry, t1, t2, t3 = reverse_targets(levels, direction)
         self.repo.append_signal_log(symbol, direction, entry=entry, t1=t1, t2=t2, t3=t3, week_id=week_id)
 
     def _resolve_open_logs(self, symbol: str, ltp: float) -> None:
@@ -359,8 +360,12 @@ class SignalService:
             if loaded is None:
                 continue
             levels, week_id, avg_x, good = loaded
-            state, last_ltp = self.repo.load_signal_state(symbol)
-            fib_buy, fib_sell = fib_levels(levels.mon_tue_high, levels.mon_tue_low)
+            state, last_ltp = self.repo.load_reverse_state(symbol)
+            # REVERSE ladders: entry = the opposite box edge, targets = compressed
+            # inside-day T1/T2/T3 (H/L/X). A BUY reverses up off the box low; a SELL
+            # reverses down off the box high.
+            buy_entry, buy_t1, buy_t2, buy_t3 = reverse_targets(levels, "BUY")
+            sell_entry, sell_t1, sell_t2, sell_t3 = reverse_targets(levels, "SELL")
             rows.append(
                 {
                     "symbol": symbol,
@@ -368,17 +373,17 @@ class SignalService:
                     "ltp": last_ltp,
                     "monTueHigh": levels.mon_tue_high,
                     "monTueLow": levels.mon_tue_low,
-                    "buyT1": levels.buy_t1,
-                    "buyT2": levels.buy_t2,
-                    "buyT3": levels.buy_t3,
-                    "sellT1": levels.sell_t1,
-                    "sellT2": levels.sell_t2,
-                    "sellT3": levels.sell_t3,
+                    "buyEntry": buy_entry,
+                    "buyT1": buy_t1,
+                    "buyT2": buy_t2,
+                    "buyT3": buy_t3,
+                    "sellEntry": sell_entry,
+                    "sellT1": sell_t1,
+                    "sellT2": sell_t2,
+                    "sellT3": sell_t3,
                     "goodInvest": good,
                     # --- Excel screening extras ---
                     "quality": invest_tier(levels.X, avg_x),  # good|invest|breakout|none
-                    "fibBuy": fib_buy,
-                    "fibSell": fib_sell,
                     "volPct": volatility_pct(levels.mon_tue_high, levels.mon_tue_low),
                     "candles": _candle_grades(all_candles.get(symbol)),
                     "weekId": week_id,
@@ -396,8 +401,9 @@ class SignalService:
         if loaded is None or candles is None:
             return None
         levels, week_id, avg_x, good = loaded
-        state, last_ltp = self.repo.load_signal_state(symbol)
-        fib_buy, fib_sell = fib_levels(levels.mon_tue_high, levels.mon_tue_low)
+        state, last_ltp = self.repo.load_reverse_state(symbol)
+        buy_entry, buy_t1, buy_t2, buy_t3 = reverse_targets(levels, "BUY")
+        sell_entry, sell_t1, sell_t2, sell_t3 = reverse_targets(levels, "SELL")
 
         def day(o):
             return {"open": o.open, "high": o.high, "low": o.low, "close": o.close}
@@ -418,14 +424,13 @@ class SignalService:
             "H": levels.H,
             "L": levels.L,
             "X": levels.X,
-            "buyT1": levels.buy_t1, "buyT2": levels.buy_t2, "buyT3": levels.buy_t3,
-            "sellT1": levels.sell_t1, "sellT2": levels.sell_t2, "sellT3": levels.sell_t3,
+            # REVERSE ladders (compressed inside-day levels): entry = opposite box edge.
+            "buyEntry": buy_entry, "buyT1": buy_t1, "buyT2": buy_t2, "buyT3": buy_t3,
+            "sellEntry": sell_entry, "sellT1": sell_t1, "sellT2": sell_t2, "sellT3": sell_t3,
             "goodInvest": good,
             # --- Excel screening extras ---
             "quality": invest_tier(levels.X, avg_x),
             "avgX": avg_x,
-            "fibBuy": fib_buy,
-            "fibSell": fib_sell,
             "volPct": volatility_pct(levels.mon_tue_high, levels.mon_tue_low),
             "candles": _candle_grades(candles),
         }
@@ -449,12 +454,12 @@ def _candle_grades(candles: dict[str, OHLC] | None) -> dict[str, str] | None:
     return {d: candle_quality(candles[d]) for d in ("mon", "tue", "wed")}
 
 
-def _rank(state: SignalState) -> int:
-    """How far along the state machine a state is: FIRED(2) > ARMED(1) > NONE(0).
-    The replay uses this to merge without ever downgrading live-scan progress."""
+def _rank(state: ReverseState) -> int:
+    """How far along the reverse state machine a state is: FIRED(2) > TRAPPED(1) >
+    NONE(0). The replay uses this to merge without downgrading live-scan progress."""
     if state.fired_dir:
         return 2
-    if state.armed_dir:
+    if state.faked_dir:
         return 1
     return 0
 

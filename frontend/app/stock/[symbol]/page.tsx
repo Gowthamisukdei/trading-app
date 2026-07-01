@@ -20,8 +20,8 @@ import {
 const STATUS_STYLE: Record<Status, { label: string; cls: string }> = {
   BUY: { label: "BUY", cls: "bg-green-500/15 text-green-400 ring-green-500/30" },
   SELL: { label: "SELL", cls: "bg-red-500/15 text-red-400 ring-red-500/30" },
-  ARMED_BUY: { label: "Waiting for BUY", cls: "bg-amber-500/15 text-amber-400 ring-amber-500/30" },
-  ARMED_SELL: { label: "Waiting for SELL", cls: "bg-amber-500/15 text-amber-400 ring-amber-500/30" },
+  FAKED_DOWN: { label: "Trapped ↓ · watch BUY", cls: "bg-amber-500/15 text-amber-400 ring-amber-500/30" },
+  FAKED_UP: { label: "Trapped ↑ · watch SELL", cls: "bg-amber-500/15 text-amber-400 ring-amber-500/30" },
   NONE: { label: "—", cls: "bg-zinc-700/30 text-zinc-400 ring-zinc-600/30" },
 };
 
@@ -196,19 +196,19 @@ export default function StockPage() {
             <Stat label="Avg X (3 wk)" value={data.avgX == null ? "—" : fmt(data.avgX)} />
           </div>
 
-          {/* ENTRY — the BUY/SELL LEVEL (23.6% breakout confirmation) */}
-          <h2 className="mt-7 text-sm font-medium text-zinc-400">Entry — BUY / SELL LEVEL</h2>
+          {/* ENTRY — the REVERSE entry = the OPPOSITE box edge */}
+          <h2 className="mt-7 text-sm font-medium text-zinc-400">Reverse entry — opposite box edge</h2>
           <div className="mt-2 grid grid-cols-2 gap-3">
-            <Stat label="BUY LEVEL (enter long)" value={fmt(data.fibBuy)} tone="text-green-400" />
-            <Stat label="SELL LEVEL (enter short)" value={fmt(data.fibSell)} tone="text-red-400" />
+            <Stat label="BUY entry (box high H)" value={fmt(data.buyEntry)} tone="text-green-400" />
+            <Stat label="SELL entry (box low L)" value={fmt(data.sellEntry)} tone="text-red-400" />
           </div>
           <p className="mt-2 text-xs text-zinc-500">
-            The entry trigger: price clearing 23.6% beyond the Mon-Tue box confirms the
-            breakout. A BUY enters at the BUY LEVEL, a SELL at the SELL LEVEL.
+            Reverse breakout: after price fakes to T1 on one side and snaps back through
+            the box, a BUY enters at the box high (H), a SELL at the box low (L).
           </p>
 
-          {/* PROFIT TARGETS — the T1/T2/T3 ladders */}
-          <h2 className="mt-7 text-sm font-medium text-zinc-400">Profit targets (after entry)</h2>
+          {/* PROFIT TARGETS — the compressed T1/T2/T3 ladders */}
+          <h2 className="mt-7 text-sm font-medium text-zinc-400">Profit targets (after reverse entry)</h2>
           <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-xl border border-green-500/20 bg-green-500/5 px-4 py-3">
               <div className="text-xs font-medium text-green-400">BUY targets (above the box)</div>

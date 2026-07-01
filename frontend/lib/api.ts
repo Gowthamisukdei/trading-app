@@ -7,7 +7,11 @@ export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
 // Mirror of the JSON each /api/signals row returns (see backend service.py).
-export type Status = "NONE" | "ARMED_BUY" | "ARMED_SELL" | "BUY" | "SELL";
+// The live play is the REVERSE breakout: a fake to T1 on one side traps the crowd
+// (FAKED_UP / FAKED_DOWN), then a snap-back through the box fires the entry.
+//   FAKED_UP   — faked up to buy_t1; watching for a reverse DOWN -> SELL
+//   FAKED_DOWN — faked down to sell_t1; watching for a reverse UP -> BUY
+export type Status = "NONE" | "FAKED_UP" | "FAKED_DOWN" | "BUY" | "SELL";
 
 // Volatility tier from the Excel: this week's range vs the 3-week average.
 //   good = strong compression, invest = mild, breakout = expansion, none = normal.
@@ -27,16 +31,18 @@ export interface Signal {
   ltp: number | null;
   monTueHigh: number;
   monTueLow: number;
+  // REVERSE ladders: entry = the opposite box edge the reversal exits through
+  // (buyEntry = box high H, sellEntry = box low L); T1/T2/T3 = compressed targets.
+  buyEntry: number;
   buyT1: number;
   buyT2: number;
   buyT3: number;
+  sellEntry: number;
   sellT1: number;
   sellT2: number;
   sellT3: number;
   goodInvest: boolean;
   quality: Quality;
-  fibBuy: number;
-  fibSell: number;
   volPct: number;
   candles: Candles | null;
   weekId: string;
@@ -78,17 +84,17 @@ export interface StockDetail {
   H: number;
   L: number;
   X: number;
+  buyEntry: number;
   buyT1: number;
   buyT2: number;
   buyT3: number;
+  sellEntry: number;
   sellT1: number;
   sellT2: number;
   sellT3: number;
   goodInvest: boolean;
   quality: Quality;
   avgX: number | null;
-  fibBuy: number;
-  fibSell: number;
   volPct: number;
   candles: Candles | null;
 }
